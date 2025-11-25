@@ -14,6 +14,7 @@ const {
   writeResponseChunk,
 } = require("../../../utils/helpers/chat/responses");
 const { ApiChatHandler } = require("../../../utils/chats/apiChatHandler");
+const { getModelTag } = require("../../utils");
 
 function apiWorkspaceEndpoints(app) {
   if (!app) return;
@@ -87,6 +88,7 @@ function apiWorkspaceEndpoints(app) {
         Embedder: process.env.EMBEDDING_ENGINE || "inherit",
         VectorDbSelection: process.env.VECTOR_DB || "lancedb",
         TTSSelection: process.env.TTS_PROVIDER || "native",
+        LLMModel: getModelTag(),
       });
       await EventLogs.logEvent("api_workspace_created", {
         workspaceName: workspace?.name || "Unknown Workspace",
@@ -411,7 +413,7 @@ function apiWorkspaceEndpoints(app) {
         const {
           apiSessionId = null,
           limit = 100,
-          orderBy = "desc",
+          orderBy = "asc",
         } = request.query;
         const workspace = await Workspace.get({ slug });
 
@@ -423,7 +425,7 @@ function apiWorkspaceEndpoints(app) {
         const validLimit = Math.max(1, parseInt(limit));
         const validOrderBy = ["asc", "desc"].includes(orderBy)
           ? orderBy
-          : "desc";
+          : "asc";
 
         const history = apiSessionId
           ? await WorkspaceChats.forWorkspaceByApiSessionId(
@@ -596,7 +598,7 @@ function apiWorkspaceEndpoints(app) {
    #swagger.tags = ['Workspaces']
    #swagger.description = 'Execute a chat with a workspace'
    #swagger.requestBody = {
-       description: 'Send a prompt to the workspace and the type of conversation (query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.',
+       description: 'Send a prompt to the workspace and the type of conversation (query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.<br/><b>Attachments:</b> Can include images and documents.<br/><b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Document attachments:</b> must have the mime type <code>application/anythingllm-document</code> - otherwise it will be passed to the LLM as an image and may fail to process. This uses the built-in document processor to first parse the document to text before injecting it into the context window.',
        required: true,
        content: {
          "application/json": {
@@ -609,8 +611,14 @@ function apiWorkspaceEndpoints(app) {
                  name: "image.png",
                  mime: "image/png",
                  contentString: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+               },
+               {
+                 name: "this is a document.pdf",
+                 mime: "application/anythingllm-document",
+                 contentString: "data:application/pdf;base64,iVBORw0KGgoAAAANSUhEUgAA..."
                }
-             ]
+             ],
+             reset: false
            }
          }
        }
@@ -645,6 +653,7 @@ function apiWorkspaceEndpoints(app) {
           mode = "query",
           sessionId = null,
           attachments = [],
+          reset = false,
         } = reqBody(request);
         const workspace = await Workspace.get({ slug: String(slug) });
 
@@ -660,7 +669,7 @@ function apiWorkspaceEndpoints(app) {
           return;
         }
 
-        if (!message?.length || !VALID_CHAT_MODE.includes(mode)) {
+        if ((!message?.length || !VALID_CHAT_MODE.includes(mode)) && !reset) {
           response.status(400).json({
             id: uuidv4(),
             type: "abort",
@@ -668,7 +677,7 @@ function apiWorkspaceEndpoints(app) {
             sources: [],
             close: true,
             error: !message?.length
-              ? "message parameter cannot be empty."
+              ? "Message is empty"
               : `${mode} is not a valid mode.`,
           });
           return;
@@ -682,6 +691,7 @@ function apiWorkspaceEndpoints(app) {
           thread: null,
           sessionId: !!sessionId ? String(sessionId) : null,
           attachments,
+          reset,
         });
 
         await Telemetry.sendTelemetry("sent_chat", {
@@ -718,7 +728,7 @@ function apiWorkspaceEndpoints(app) {
    #swagger.tags = ['Workspaces']
    #swagger.description = 'Execute a streamable chat with a workspace'
    #swagger.requestBody = {
-       description: 'Send a prompt to the workspace and the type of conversation (query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.',
+       description: 'Send a prompt to the workspace and the type of conversation (query or chat).<br/><b>Query:</b> Will not use LLM unless there are relevant sources from vectorDB & does not recall chat history.<br/><b>Chat:</b> Uses LLM general knowledge w/custom embeddings to produce output, uses rolling chat history.<br/><b>Attachments:</b> Can include images and documents.<br/><b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Document attachments:</b> must have the mime type <code>application/anythingllm-document</code> - otherwise it will be passed to the LLM as an image and may fail to process. This uses the built-in document processor to first parse the document to text before injecting it into the context window.',
        required: true,
        content: {
          "application/json": {
@@ -731,8 +741,14 @@ function apiWorkspaceEndpoints(app) {
                  name: "image.png",
                  mime: "image/png",
                  contentString: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+               },
+               {
+                 name: "this is a document.pdf",
+                 mime: "application/anythingllm-document",
+                 contentString: "data:application/pdf;base64,iVBORw0KGgoAAAANSUhEUgAA..."
                }
-             ]
+             ],
+             reset: false
            }
          }
        }
@@ -788,6 +804,7 @@ function apiWorkspaceEndpoints(app) {
           mode = "query",
           sessionId = null,
           attachments = [],
+          reset = false,
         } = reqBody(request);
         const workspace = await Workspace.get({ slug: String(slug) });
 
@@ -803,7 +820,7 @@ function apiWorkspaceEndpoints(app) {
           return;
         }
 
-        if (!message?.length || !VALID_CHAT_MODE.includes(mode)) {
+        if ((!message?.length || !VALID_CHAT_MODE.includes(mode)) && !reset) {
           response.status(400).json({
             id: uuidv4(),
             type: "abort",
@@ -832,6 +849,7 @@ function apiWorkspaceEndpoints(app) {
           thread: null,
           sessionId: !!sessionId ? String(sessionId) : null,
           attachments,
+          reset,
         });
         await Telemetry.sendTelemetry("sent_chat", {
           LLMSelection:
@@ -961,6 +979,7 @@ function apiWorkspaceEndpoints(app) {
           LLMConnector: getLLMProvider(),
           similarityThreshold: parseSimilarityThreshold(),
           topN: parseTopN(),
+          rerank: workspace?.vectorSearchMode === "rerank",
         });
 
         response.status(200).json({

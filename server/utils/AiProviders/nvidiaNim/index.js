@@ -4,13 +4,15 @@ const {
 } = require("../../helpers/chat/LLMPerformanceMonitor");
 const {
   handleDefaultStreamResponseV2,
+  formatChatHistory,
 } = require("../../helpers/chat/responses");
 
 class NvidiaNimLLM {
   constructor(embedder = null, modelPreference = null) {
     if (!process.env.NVIDIA_NIM_LLM_BASE_PATH)
-      throw new Error("No Nvidia NIM API Base Path was set.");
+      throw new Error("No NVIDIA NIM API Base Path was set.");
 
+    this.className = "NvidiaNimLLM";
     const { OpenAI: OpenAIApi } = require("openai");
     this.nvidiaNim = new OpenAIApi({
       baseURL: parseNvidiaNimBasePath(process.env.NVIDIA_NIM_LLM_BASE_PATH),
@@ -32,7 +34,7 @@ class NvidiaNimLLM {
   }
 
   #log(text, ...args) {
-    console.log(`\x1b[36m[${this.constructor.name}]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   #appendContext(contextTexts = []) {
@@ -84,7 +86,7 @@ class NvidiaNimLLM {
   static promptWindowLimit(_modelName) {
     const limit = process.env.NVIDIA_NIM_LLM_MODEL_TOKEN_LIMIT || 4096;
     if (!limit || isNaN(Number(limit)))
-      throw new Error("No Nvidia NIM token context limit was set.");
+      throw new Error("No NVIDIA NIM token context limit was set.");
     return Number(limit);
   }
 
@@ -93,7 +95,7 @@ class NvidiaNimLLM {
   promptWindowLimit() {
     const limit = process.env.NVIDIA_NIM_LLM_MODEL_TOKEN_LIMIT || 4096;
     if (!limit || isNaN(Number(limit)))
-      throw new Error("No Nvidia NIM token context limit was set.");
+      throw new Error("No NVIDIA NIM token context limit was set.");
     return Number(limit);
   }
 
@@ -142,7 +144,7 @@ class NvidiaNimLLM {
     };
     return [
       prompt,
-      ...chatHistory,
+      ...formatChatHistory(chatHistory, this.#generateContent),
       {
         role: "user",
         content: this.#generateContent({ userPrompt, attachments }),
@@ -153,7 +155,7 @@ class NvidiaNimLLM {
   async getChatCompletion(messages = null, { temperature = 0.7 }) {
     if (!this.model)
       throw new Error(
-        `Nvidia NIM chat: ${this.model} is not valid or defined model for chat completion!`
+        `NVIDIA NIM chat: ${this.model} is not valid or defined model for chat completion!`
       );
 
     const result = await LLMPerformanceMonitor.measureAsyncFunction(
@@ -189,7 +191,7 @@ class NvidiaNimLLM {
   async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
     if (!this.model)
       throw new Error(
-        `Nvidia NIM chat: ${this.model} is not valid or defined model for chat completion!`
+        `NVIDIA NIM chat: ${this.model} is not valid or defined model for chat completion!`
       );
 
     const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(

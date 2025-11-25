@@ -55,13 +55,13 @@ async function processRawText(textContent, metadata) {
     published: METADATA_KEYS.possible.published(metadata),
     wordCount: textContent.split(" ").length,
     pageContent: textContent,
-    token_count_estimate: tokenizeString(textContent).length,
+    token_count_estimate: tokenizeString(textContent),
   };
 
-  const document = writeToServerDocuments(
+  const document = writeToServerDocuments({
     data,
-    `raw-${stripAndSlug(metadata.title)}-${data.id}`
-  );
+    filename: `raw-${stripAndSlug(metadata.title)}-${data.id}`,
+  });
   console.log(`[SUCCESS]: Raw text and metadata saved & ready for embedding.\n`);
   return { success: true, reason: null, documents: [document] };
 }

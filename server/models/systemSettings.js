@@ -7,6 +7,9 @@ const { isValidUrl, safeJsonParse } = require("../utils/http");
 const prisma = require("../utils/prisma");
 const { v4 } = require("uuid");
 const { MetaGenerator } = require("../utils/boot/MetaGenerator");
+const { PGVector } = require("../utils/vectorDbProviders/pgvector");
+const { NativeEmbedder } = require("../utils/EmbeddingEngines/native");
+const { getBaseLLMProviderModel } = require("../utils/helpers");
 
 function isNullOrNaN(value) {
   if (value === null) return true;
@@ -14,6 +17,9 @@ function isNullOrNaN(value) {
 }
 
 const SystemSettings = {
+  /** A default system prompt that is used when no other system prompt is set or available to the function caller. */
+  saneDefaultSystemPrompt:
+    "Given the following conversation, relevant context, and a follow up question, reply with an answer to the current question the user is asking. Return only your response to the question given the above information following the users instructions as needed.",
   protectedFields: ["multi_user_mode", "hub_api_key"],
   publicFields: [
     "footer_data",
@@ -24,6 +30,7 @@ const SystemSettings = {
     "agent_search_provider",
     "agent_sql_connections",
     "default_agent_skills",
+    "disabled_agent_skills",
     "imported_agent_skills",
     "custom_app_name",
     "feature_flags",
@@ -40,8 +47,10 @@ const SystemSettings = {
     "text_splitter_chunk_overlap",
     "agent_search_provider",
     "default_agent_skills",
+    "disabled_agent_skills",
     "agent_sql_connections",
     "custom_app_name",
+    "default_system_prompt",
 
     // Meta page customization
     "meta_page_title",
@@ -69,6 +78,8 @@ const SystemSettings = {
       try {
         if (isNullOrNaN(update)) throw new Error("Value is not a number.");
         if (Number(update) <= 0) throw new Error("Value must be non-zero.");
+        const { purgeEntireVectorCache } = require("../utils/files");
+        purgeEntireVectorCache();
         return Number(update);
       } catch (e) {
         console.error(
@@ -82,6 +93,8 @@ const SystemSettings = {
       try {
         if (isNullOrNaN(update)) throw new Error("Value is not a number");
         if (Number(update) < 0) throw new Error("Value cannot be less than 0.");
+        const { purgeEntireVectorCache } = require("../utils/files");
+        purgeEntireVectorCache();
         return Number(update);
       } catch (e) {
         console.error(
@@ -97,6 +110,7 @@ const SystemSettings = {
         if (
           ![
             "google-search-engine",
+            "serpapi",
             "searchapi",
             "serper-dot-dev",
             "bing-search",
@@ -104,6 +118,7 @@ const SystemSettings = {
             "searxng-engine",
             "tavily-search",
             "duckduckgo-engine",
+            "exa-search",
           ].includes(update)
         )
           throw new Error("Invalid SERP provider.");
@@ -122,6 +137,15 @@ const SystemSettings = {
         return JSON.stringify(skills);
       } catch (e) {
         console.error(`Could not validate agent skills.`);
+        return JSON.stringify([]);
+      }
+    },
+    disabled_agent_skills: (updates) => {
+      try {
+        const skills = updates.split(",").filter((skill) => !!skill);
+        return JSON.stringify(skills);
+      } catch (e) {
+        console.error(`Could not validate disabled agent skills.`);
         return JSON.stringify([]);
       }
     },
@@ -172,11 +196,18 @@ const SystemSettings = {
       if (!apiKey) return null;
       return String(apiKey);
     },
+    default_system_prompt: (prompt) => {
+      if (typeof prompt !== "string" || !prompt) return null;
+      if (prompt.trim() === SystemSettings.saneDefaultSystemPrompt)
+        return SystemSettings.saneDefaultSystemPrompt;
+      return String(prompt.trim());
+    },
   },
   currentSettings: async function () {
     const { hasVectorCachedFiles } = require("../utils/files");
     const llmProvider = process.env.LLM_PROVIDER;
     const vectorDB = process.env.VECTOR_DB;
+    const embeddingEngine = process.env.EMBEDDING_ENGINE ?? "native";
     return {
       // --------------------------------------------------------
       // General Settings
@@ -191,17 +222,22 @@ const SystemSettings = {
       // --------------------------------------------------------
       // Embedder Provider Selection Settings & Configs
       // --------------------------------------------------------
-      EmbeddingEngine: process.env.EMBEDDING_ENGINE,
+      EmbeddingEngine: embeddingEngine,
       HasExistingEmbeddings: await this.hasEmbeddings(), // check if they have any currently embedded documents active in workspaces.
       HasCachedEmbeddings: hasVectorCachedFiles(), // check if they any currently cached embedded docs.
       EmbeddingBasePath: process.env.EMBEDDING_BASE_PATH,
-      EmbeddingModelPref: process.env.EMBEDDING_MODEL_PREF,
+      EmbeddingModelPref:
+        embeddingEngine === "native"
+          ? NativeEmbedder._getEmbeddingModel()
+          : process.env.EMBEDDING_MODEL_PREF,
       EmbeddingModelMaxChunkLength:
         process.env.EMBEDDING_MODEL_MAX_CHUNK_LENGTH,
+      VoyageAiApiKey: !!process.env.VOYAGEAI_API_KEY,
       GenericOpenAiEmbeddingApiKey:
         !!process.env.GENERIC_OPEN_AI_EMBEDDING_API_KEY,
       GenericOpenAiEmbeddingMaxConcurrentChunks:
         process.env.GENERIC_OPEN_AI_EMBEDDING_MAX_CONCURRENT_CHUNKS || 500,
+      GeminiEmbeddingApiKey: !!process.env.GEMINI_EMBEDDING_API_KEY,
 
       // --------------------------------------------------------
       // VectorDB Provider Selection Settings & Configs
@@ -213,6 +249,7 @@ const SystemSettings = {
       // LLM Provider Selection Settings & Configs
       // --------------------------------------------------------
       LLMProvider: llmProvider,
+      LLMModel: getBaseLLMProviderModel({ provider: llmProvider }) || null,
       ...this.llmPreferenceKeys(),
 
       // --------------------------------------------------------
@@ -240,6 +277,7 @@ const SystemSettings = {
         process.env.TTS_PIPER_VOICE_MODEL ?? "en_US-hfc_female-medium",
       // OpenAI Generic TTS
       TTSOpenAICompatibleKey: !!process.env.TTS_OPEN_AI_COMPATIBLE_KEY,
+      TTSOpenAICompatibleModel: process.env.TTS_OPEN_AI_COMPATIBLE_MODEL,
       TTSOpenAICompatibleVoiceModel:
         process.env.TTS_OPEN_AI_COMPATIBLE_VOICE_MODEL,
       TTSOpenAICompatibleEndpoint: process.env.TTS_OPEN_AI_COMPATIBLE_ENDPOINT,
@@ -249,6 +287,8 @@ const SystemSettings = {
       // --------------------------------------------------------
       AgentGoogleSearchEngineId: process.env.AGENT_GSE_CTX || null,
       AgentGoogleSearchEngineKey: !!process.env.AGENT_GSE_KEY || null,
+      AgentSerpApiKey: !!process.env.AGENT_SERPAPI_API_KEY || null,
+      AgentSerpApiEngine: process.env.AGENT_SERPAPI_ENGINE || "google",
       AgentSearchApiKey: !!process.env.AGENT_SEARCHAPI_API_KEY || null,
       AgentSearchApiEngine: process.env.AGENT_SEARCHAPI_ENGINE || "google",
       AgentSerperApiKey: !!process.env.AGENT_SERPER_DEV_KEY || null,
@@ -256,6 +296,7 @@ const SystemSettings = {
       AgentSerplyApiKey: !!process.env.AGENT_SERPLY_API_KEY || null,
       AgentSearXNGApiUrl: process.env.AGENT_SEARXNG_API_URL || null,
       AgentTavilyApiKey: !!process.env.AGENT_TAVILY_API_KEY || null,
+      AgentExaApiKey: !!process.env.AGENT_EXA_API_KEY || null,
 
       // --------------------------------------------------------
       // Compliance Settings
@@ -263,6 +304,13 @@ const SystemSettings = {
       // Disable View Chat History for the whole instance.
       DisableViewChatHistory:
         "DISABLE_VIEW_CHAT_HISTORY" in process.env || false,
+
+      // --------------------------------------------------------
+      // Simple SSO Settings
+      // --------------------------------------------------------
+      SimpleSSOEnabled: "SIMPLE_SSO_ENABLED" in process.env || false,
+      SimpleSSONoLogin: "SIMPLE_SSO_NO_LOGIN" in process.env || false,
+      SimpleSSONoLoginRedirect: this.simpleSSO.noLoginRedirect(),
     };
   },
 
@@ -394,6 +442,11 @@ const SystemSettings = {
       ChromaApiHeader: process.env.CHROMA_API_HEADER,
       ChromaApiKey: !!process.env.CHROMA_API_KEY,
 
+      // ChromaCloud DB Keys
+      ChromaCloudApiKey: !!process.env.CHROMACLOUD_API_KEY,
+      ChromaCloudTenant: process.env.CHROMACLOUD_TENANT,
+      ChromaCloudDatabase: process.env.CHROMACLOUD_DATABASE,
+
       // Weaviate DB Keys
       WeaviateEndpoint: process.env.WEAVIATE_ENDPOINT,
       WeaviateApiKey: process.env.WEAVIATE_API_KEY,
@@ -414,6 +467,10 @@ const SystemSettings = {
       // AstraDB Keys
       AstraDBApplicationToken: process?.env?.ASTRA_DB_APPLICATION_TOKEN,
       AstraDBEndpoint: process?.env?.ASTRA_DB_ENDPOINT,
+
+      // PGVector Keys
+      PGVectorConnectionString: !!PGVector.connectionString() || false,
+      PGVectorTableName: PGVector.tableName(),
     };
   },
 
@@ -429,20 +486,23 @@ const SystemSettings = {
       AzureOpenAiModelPref: process.env.OPEN_MODEL_PREF,
       AzureOpenAiEmbeddingModelPref: process.env.EMBEDDING_MODEL_PREF,
       AzureOpenAiTokenLimit: process.env.AZURE_OPENAI_TOKEN_LIMIT || 4096,
+      AzureOpenAiModelType: process.env.AZURE_OPENAI_MODEL_TYPE || "default",
 
       // Anthropic Keys
       AnthropicApiKey: !!process.env.ANTHROPIC_API_KEY,
       AnthropicModelPref: process.env.ANTHROPIC_MODEL_PREF || "claude-2",
+      AnthropicCacheControl: process.env.ANTHROPIC_CACHE_CONTROL || "none",
 
       // Gemini Keys
       GeminiLLMApiKey: !!process.env.GEMINI_API_KEY,
-      GeminiLLMModelPref: process.env.GEMINI_LLM_MODEL_PREF || "gemini-pro",
+      GeminiLLMModelPref:
+        process.env.GEMINI_LLM_MODEL_PREF || "gemini-2.0-flash-lite",
       GeminiSafetySetting:
         process.env.GEMINI_SAFETY_SETTING || "BLOCK_MEDIUM_AND_ABOVE",
 
       // LMStudio Keys
       LMStudioBasePath: process.env.LMSTUDIO_BASE_PATH,
-      LMStudioTokenLimit: process.env.LMSTUDIO_MODEL_TOKEN_LIMIT,
+      LMStudioTokenLimit: process.env.LMSTUDIO_MODEL_TOKEN_LIMIT || null,
       LMStudioModelPref: process.env.LMSTUDIO_MODEL_PREF,
 
       // LocalAI Keys
@@ -452,9 +512,10 @@ const SystemSettings = {
       LocalAiTokenLimit: process.env.LOCAL_AI_MODEL_TOKEN_LIMIT,
 
       // Ollama LLM Keys
+      OllamaLLMAuthToken: !!process.env.OLLAMA_AUTH_TOKEN,
       OllamaLLMBasePath: process.env.OLLAMA_BASE_PATH,
       OllamaLLMModelPref: process.env.OLLAMA_MODEL_PREF,
-      OllamaLLMTokenLimit: process.env.OLLAMA_MODEL_TOKEN_LIMIT,
+      OllamaLLMTokenLimit: process.env.OLLAMA_MODEL_TOKEN_LIMIT || null,
       OllamaLLMKeepAliveSeconds: process.env.OLLAMA_KEEP_ALIVE_TIMEOUT ?? 300,
       OllamaLLMPerformanceMode: process.env.OLLAMA_PERFORMANCE_MODE ?? "base",
 
@@ -488,10 +549,6 @@ const SystemSettings = {
       GroqApiKey: !!process.env.GROQ_API_KEY,
       GroqModelPref: process.env.GROQ_MODEL_PREF,
 
-      // Native LLM Keys
-      NativeLLMModelPref: process.env.NATIVE_LLM_MODEL_PREF,
-      NativeLLMTokenLimit: process.env.NATIVE_LLM_MODEL_TOKEN_LIMIT,
-
       // HuggingFace Dedicated Inference
       HuggingFaceLLMEndpoint: process.env.HUGGING_FACE_LLM_ENDPOINT,
       HuggingFaceLLMAccessToken: !!process.env.HUGGING_FACE_LLM_API_KEY,
@@ -501,6 +558,7 @@ const SystemSettings = {
       KoboldCPPModelPref: process.env.KOBOLD_CPP_MODEL_PREF,
       KoboldCPPBasePath: process.env.KOBOLD_CPP_BASE_PATH,
       KoboldCPPTokenLimit: process.env.KOBOLD_CPP_MODEL_TOKEN_LIMIT,
+      KoboldCPPMaxTokens: process.env.KOBOLD_CPP_MAX_TOKENS,
 
       // Text Generation Web UI Keys
       TextGenWebUIBasePath: process.env.TEXT_GEN_WEB_UI_BASE_PATH,
@@ -513,6 +571,11 @@ const SystemSettings = {
       LiteLLMBasePath: process.env.LITE_LLM_BASE_PATH,
       LiteLLMApiKey: !!process.env.LITE_LLM_API_KEY,
 
+      // Moonshot AI Keys
+      MoonshotAiApiKey: !!process.env.MOONSHOT_AI_API_KEY,
+      MoonshotAiModelPref:
+        process.env.MOONSHOT_AI_MODEL_PREF || "moonshot-v1-32k",
+
       // Generic OpenAI Keys
       GenericOpenAiBasePath: process.env.GENERIC_OPEN_AI_BASE_PATH,
       GenericOpenAiModelPref: process.env.GENERIC_OPEN_AI_MODEL_PREF,
@@ -520,21 +583,27 @@ const SystemSettings = {
       GenericOpenAiKey: !!process.env.GENERIC_OPEN_AI_API_KEY,
       GenericOpenAiMaxTokens: process.env.GENERIC_OPEN_AI_MAX_TOKENS,
 
+      // Foundry Keys
+      FoundryBasePath: process.env.FOUNDRY_BASE_PATH,
+      FoundryModelPref: process.env.FOUNDRY_MODEL_PREF,
+      FoundryModelTokenLimit: process.env.FOUNDRY_MODEL_TOKEN_LIMIT,
+
       AwsBedrockLLMConnectionMethod:
         process.env.AWS_BEDROCK_LLM_CONNECTION_METHOD || "iam",
       AwsBedrockLLMAccessKeyId: !!process.env.AWS_BEDROCK_LLM_ACCESS_KEY_ID,
       AwsBedrockLLMAccessKey: !!process.env.AWS_BEDROCK_LLM_ACCESS_KEY,
       AwsBedrockLLMSessionToken: !!process.env.AWS_BEDROCK_LLM_SESSION_TOKEN,
+      AwsBedrockLLMAPIKey: !!process.env.AWS_BEDROCK_LLM_API_KEY,
       AwsBedrockLLMRegion: process.env.AWS_BEDROCK_LLM_REGION,
       AwsBedrockLLMModel: process.env.AWS_BEDROCK_LLM_MODEL_PREFERENCE,
-      AwsBedrockLLMTokenLimit: process.env.AWS_BEDROCK_LLM_MODEL_TOKEN_LIMIT,
+      AwsBedrockLLMTokenLimit:
+        process.env.AWS_BEDROCK_LLM_MODEL_TOKEN_LIMIT || 8192,
+      AwsBedrockLLMMaxOutputTokens:
+        process.env.AWS_BEDROCK_LLM_MAX_OUTPUT_TOKENS || 4096,
 
       // Cohere API Keys
       CohereApiKey: !!process.env.COHERE_API_KEY,
       CohereModelPref: process.env.COHERE_MODEL_PREF,
-
-      // VoyageAi API Keys
-      VoyageAiApiKey: !!process.env.VOYAGEAI_API_KEY,
 
       // DeepSeek API Keys
       DeepSeekApiKey: !!process.env.DEEPSEEK_API_KEY,
@@ -548,10 +617,29 @@ const SystemSettings = {
       XAIApiKey: !!process.env.XAI_LLM_API_KEY,
       XAIModelPref: process.env.XAI_LLM_MODEL_PREF,
 
-      // Nvidia NIM Keys
+      // NVIDIA NIM Keys
       NvidiaNimLLMBasePath: process.env.NVIDIA_NIM_LLM_BASE_PATH,
       NvidiaNimLLMModelPref: process.env.NVIDIA_NIM_LLM_MODEL_PREF,
       NvidiaNimLLMTokenLimit: process.env.NVIDIA_NIM_LLM_MODEL_TOKEN_LIMIT,
+
+      // PPIO API keys
+      PPIOApiKey: !!process.env.PPIO_API_KEY,
+      PPIOModelPref: process.env.PPIO_MODEL_PREF,
+
+      // Dell Pro AI Studio Keys
+      DellProAiStudioBasePath: process.env.DPAIS_LLM_BASE_PATH,
+      DellProAiStudioModelPref: process.env.DPAIS_LLM_MODEL_PREF,
+      DellProAiStudioTokenLimit:
+        process.env.DPAIS_LLM_MODEL_TOKEN_LIMIT ?? 4096,
+
+      // CometAPI LLM Keys
+      CometApiLLMApiKey: !!process.env.COMETAPI_LLM_API_KEY,
+      CometApiLLMModelPref: process.env.COMETAPI_LLM_MODEL_PREF,
+      CometApiLLMTimeout: process.env.COMETAPI_LLM_TIMEOUT_MS,
+
+      // Z.AI Keys
+      ZAiApiKey: !!process.env.ZAI_API_KEY,
+      ZAiModelPref: process.env.ZAI_MODEL_PREF,
     };
   },
 
@@ -590,6 +678,29 @@ const SystemSettings = {
       console.error(error.message);
       return { connectionKey: null };
     }
+  },
+
+  simpleSSO: {
+    /**
+     * Gets the no login redirect URL. If the conditions below are not met, this will return null.
+     * - If simple SSO is not enabled.
+     * - If simple SSO login page is not disabled.
+     * - If the no login redirect is not a valid URL or is not set.
+     * @returns {string | null}
+     */
+    noLoginRedirect: () => {
+      if (!("SIMPLE_SSO_ENABLED" in process.env)) return null; // if simple SSO is not enabled, return null
+      if (!("SIMPLE_SSO_NO_LOGIN" in process.env)) return null; // if the no login config is not set, return null
+      if (!("SIMPLE_SSO_NO_LOGIN_REDIRECT" in process.env)) return null; // if the no login redirect is not set, return null
+
+      try {
+        let url = new URL(process.env.SIMPLE_SSO_NO_LOGIN_REDIRECT);
+        return url.toString();
+      } catch {}
+
+      // if the no login redirect is not a valid URL or is not set, return null
+      return null;
+    },
   },
 };
 

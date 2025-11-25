@@ -3,13 +3,21 @@ const { DocumentManager } = require("../DocumentManager");
 const { WorkspaceChats } = require("../../models/workspaceChats");
 const { getVectorDbClass, getLLMProvider } = require("../helpers");
 const { writeResponseChunk } = require("../helpers/chat/responses");
-const { chatPrompt, sourceIdentifier, recentChatHistory } = require("./index");
+const {
+  chatPrompt,
+  sourceIdentifier,
+  recentChatHistory,
+  grepAllSlashCommands,
+} = require("./index");
 const {
   EphemeralAgentHandler,
   EphemeralEventListener,
 } = require("../agents/ephemeral");
 const { Telemetry } = require("../../models/telemetry");
-
+const { CollectorApi } = require("../collectorApi");
+const fs = require("fs");
+const path = require("path");
+const { hotdirPath, normalizePath, isWithin } = require("../files");
 /**
  * @typedef ResponseObject
  * @property {string} id - uuid of response
@@ -22,6 +30,72 @@ const { Telemetry } = require("../../models/telemetry");
  */
 
 /**
+ * Users can pass in documents as attachments to the chat API.
+ * The name of the document is the name of the attachment and must include the file extension.
+ * the mime type for documents is `application/anythingllm-document` - anything else is assumed to be an image.
+ * @param {{name: string, mime: string, contentString: string}[]} attachments
+ * @returns {Promise<{parsedDocuments: Object[], imageAttachments: {name: string; mime: string; contentString: string}[]}>}
+ */
+async function processDocumentAttachments(attachments = []) {
+  if (!Array.isArray(attachments) || attachments.length === 0)
+    return { parsedDocuments: [], imageAttachments: [] };
+  const documentAttachments = [];
+  const imageAttachments = [];
+  for (const attachment of attachments) {
+    if (
+      attachment &&
+      attachment.contentString &&
+      attachment.mime &&
+      attachment.mime.toLowerCase() === "application/anythingllm-document"
+    )
+      documentAttachments.push(attachment);
+    else imageAttachments.push(attachment);
+  }
+
+  if (documentAttachments.length === 0)
+    return { parsedDocuments: [], imageAttachments };
+  const Collector = new CollectorApi();
+  const processingOnline = await Collector.online();
+  if (!processingOnline) {
+    console.warn(
+      "Collector API is not online, skipping document attachment processing"
+    );
+    return { parsedDocuments: [], imageAttachments };
+  }
+  if (!fs.existsSync(hotdirPath)) fs.mkdirSync(hotdirPath, { recursive: true });
+
+  const parsedDocuments = [];
+  for (const attachment of documentAttachments) {
+    try {
+      let base64Data = attachment.contentString;
+      const dataUriMatch = base64Data.match(/^data:[^;]+;base64,(.+)$/);
+      if (dataUriMatch) base64Data = dataUriMatch[1];
+
+      const buffer = Buffer.from(base64Data, "base64");
+      const filename = normalizePath(
+        attachment.name || `attachment-${uuidv4()}`
+      );
+      const filePath = normalizePath(path.join(hotdirPath, filename));
+      if (!isWithin(hotdirPath, filePath))
+        throw new Error(`Invalid file path for attachment ${filename}`);
+      fs.writeFileSync(filePath, buffer);
+
+      const { success, reason, documents } =
+        await Collector.parseDocument(filename);
+      if (success && documents?.length > 0) parsedDocuments.push(...documents);
+      else console.warn(`Failed to parse attachment ${filename}:`, reason);
+    } catch (error) {
+      console.error(
+        `Error processing attachment ${attachment.name}:`,
+        error.message
+      );
+    }
+  }
+
+  return { parsedDocuments, imageAttachments };
+}
+
+/**
  * Handle synchronous chats with your workspace via the developer API endpoint
  * @param {{
  *  workspace: import("@prisma/client").workspaces,
@@ -31,6 +105,7 @@ const { Telemetry } = require("../../models/telemetry");
  *  thread: import("@prisma/client").workspace_threads|null,
  *  sessionId: string|null,
  *  attachments: { name: string; mime: string; contentString: string }[],
+ *  reset: boolean,
  * }} parameters
  * @returns {Promise<ResponseObject>}
  */
@@ -42,9 +117,38 @@ async function chatSync({
   thread = null,
   sessionId = null,
   attachments = [],
+  reset = false,
 }) {
   const uuid = uuidv4();
   const chatMode = mode ?? "chat";
+
+  // If the user wants to reset the chat history we do so pre-flight
+  // and continue execution. If no message is provided then the user intended
+  // to reset the chat history only and we can exit early with a confirmation.
+  if (reset) {
+    await WorkspaceChats.markThreadHistoryInvalidV2({
+      workspaceId: workspace.id,
+      user_id: user?.id,
+      thread_id: thread?.id,
+      api_session_id: sessionId,
+    });
+    if (!message?.length) {
+      return {
+        id: uuid,
+        type: "textResponse",
+        textResponse: "Chat history was reset!",
+        sources: [],
+        close: true,
+        error: null,
+        metrics: {},
+      };
+    }
+  }
+
+  // Process slash commands
+  // Since preset commands are not supported in API calls, we can just process the message here
+  const processedMessage = await grepAllSlashCommands(message);
+  message = processedMessage;
 
   if (EphemeralAgentHandler.isAgentInvocation({ message })) {
     await Telemetry.sendTelemetry("agent_chat_started");
@@ -80,6 +184,7 @@ async function chatSync({
           response: {
             text: textResponse,
             sources: [],
+            attachments,
             type: chatMode,
             thoughts,
           },
@@ -120,6 +225,7 @@ async function chatSync({
       response: {
         text: textResponse,
         sources: [],
+        attachments: attachments,
         type: chatMode,
         metrics: {},
       },
@@ -171,6 +277,21 @@ async function chatSync({
       });
     });
 
+  const processedAttachments = await processDocumentAttachments(attachments);
+  const parsedAttachments = processedAttachments.parsedDocuments;
+  attachments = processedAttachments.imageAttachments;
+  parsedAttachments.forEach((doc) => {
+    if (doc.pageContent) {
+      contextTexts.push(doc.pageContent);
+      const { pageContent, ...metadata } = doc;
+      sources.push({
+        text:
+          pageContent.slice(0, 1_000) + "...continued on in source document...",
+        ...metadata,
+      });
+    }
+  });
+
   const vectorSearchResults =
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
@@ -180,6 +301,7 @@ async function chatSync({
           similarityThreshold: workspace?.similarityThreshold,
           topN: workspace?.topN,
           filterIdentifiers: pinnedDocIdentifiers,
+          rerank: workspace?.vectorSearchMode === "rerank",
         })
       : {
           contextTexts: [],
@@ -231,6 +353,7 @@ async function chatSync({
       response: {
         text: textResponse,
         sources: [],
+        attachments: attachments,
         type: chatMode,
         metrics: {},
       },
@@ -255,7 +378,7 @@ async function chatSync({
   // and build system messages based on inputs and history.
   const messages = await LLMConnector.compressMessages(
     {
-      systemPrompt: chatPrompt(workspace),
+      systemPrompt: await chatPrompt(workspace, user),
       userPrompt: message,
       contextTexts,
       chatHistory,
@@ -268,6 +391,7 @@ async function chatSync({
   const { textResponse, metrics: performanceMetrics } =
     await LLMConnector.getChatCompletion(messages, {
       temperature: workspace?.openAiTemp ?? LLMConnector.defaultTemp,
+      user: user,
     });
 
   if (!textResponse) {
@@ -288,6 +412,7 @@ async function chatSync({
     response: {
       text: textResponse,
       sources,
+      attachments,
       type: chatMode,
       metrics: performanceMetrics,
     },
@@ -319,6 +444,7 @@ async function chatSync({
  *  thread: import("@prisma/client").workspace_threads|null,
  *  sessionId: string|null,
  *  attachments: { name: string; mime: string; contentString: string }[],
+ *  reset: boolean,
  * }} parameters
  * @returns {Promise<VoidFunction>}
  */
@@ -331,9 +457,40 @@ async function streamChat({
   thread = null,
   sessionId = null,
   attachments = [],
+  reset = false,
 }) {
   const uuid = uuidv4();
   const chatMode = mode ?? "chat";
+
+  // If the user wants to reset the chat history we do so pre-flight
+  // and continue execution. If no message is provided then the user intended
+  // to reset the chat history only and we can exit early with a confirmation.
+  if (reset) {
+    await WorkspaceChats.markThreadHistoryInvalidV2({
+      workspaceId: workspace.id,
+      user_id: user?.id,
+      thread_id: thread?.id,
+      api_session_id: sessionId,
+    });
+    if (!message?.length) {
+      writeResponseChunk(response, {
+        id: uuid,
+        type: "textResponse",
+        textResponse: "Chat history was reset!",
+        sources: [],
+        attachments: [],
+        close: true,
+        error: null,
+        metrics: {},
+      });
+      return;
+    }
+  }
+
+  // Check for and process slash commands
+  // Since preset commands are not supported in API calls, we can just process the message here
+  const processedMessage = await grepAllSlashCommands(message);
+  message = processedMessage;
 
   if (EphemeralAgentHandler.isAgentInvocation({ message })) {
     await Telemetry.sendTelemetry("agent_chat_started");
@@ -362,17 +519,18 @@ async function streamChat({
     return eventListener
       .streamAgentEvents(response, uuid)
       .then(async ({ thoughts, textResponse }) => {
-        console.log({ thoughts, textResponse });
         await WorkspaceChats.new({
           workspaceId: workspace.id,
           prompt: String(message),
           response: {
             text: textResponse,
             sources: [],
+            attachments: attachments,
             type: chatMode,
             thoughts,
           },
-          include: false,
+          include: true,
+          threadId: thread?.id || null,
           apiSessionId: sessionId,
         });
         writeResponseChunk(response, {
@@ -418,8 +576,8 @@ async function streamChat({
       response: {
         text: textResponse,
         sources: [],
+        attachments: attachments,
         type: chatMode,
-        attachments: [],
         metrics: {},
       },
       threadId: thread?.id || null,
@@ -471,6 +629,21 @@ async function streamChat({
       });
     });
 
+  const processedAttachments = await processDocumentAttachments(attachments);
+  const parsedAttachments = processedAttachments.parsedDocuments;
+  attachments = processedAttachments.imageAttachments;
+  parsedAttachments.forEach((doc) => {
+    if (doc.pageContent) {
+      contextTexts.push(doc.pageContent);
+      const { pageContent, ...metadata } = doc;
+      sources.push({
+        text:
+          pageContent.slice(0, 1_000) + "...continued on in source document...",
+        ...metadata,
+      });
+    }
+  });
+
   const vectorSearchResults =
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
@@ -480,6 +653,7 @@ async function streamChat({
           similarityThreshold: workspace?.similarityThreshold,
           topN: workspace?.topN,
           filterIdentifiers: pinnedDocIdentifiers,
+          rerank: workspace?.vectorSearchMode === "rerank",
         })
       : {
           contextTexts: [],
@@ -541,8 +715,8 @@ async function streamChat({
       response: {
         text: textResponse,
         sources: [],
+        attachments: attachments,
         type: chatMode,
-        attachments: [],
         metrics: {},
       },
       threadId: thread?.id || null,
@@ -557,7 +731,7 @@ async function streamChat({
   // and build system messages based on inputs and history.
   const messages = await LLMConnector.compressMessages(
     {
-      systemPrompt: chatPrompt(workspace),
+      systemPrompt: await chatPrompt(workspace, user),
       userPrompt: message,
       contextTexts,
       chatHistory,
@@ -575,6 +749,7 @@ async function streamChat({
     const { textResponse, metrics: performanceMetrics } =
       await LLMConnector.getChatCompletion(messages, {
         temperature: workspace?.openAiTemp ?? LLMConnector.defaultTemp,
+        user: user,
       });
     completeText = textResponse;
     metrics = performanceMetrics;
@@ -590,11 +765,9 @@ async function streamChat({
   } else {
     const stream = await LLMConnector.streamGetChatCompletion(messages, {
       temperature: workspace?.openAiTemp ?? LLMConnector.defaultTemp,
+      user: user,
     });
-    completeText = await LLMConnector.handleStream(response, stream, {
-      uuid,
-      sources,
-    });
+    completeText = await LLMConnector.handleStream(response, stream, { uuid });
     metrics = stream.metrics;
   }
 
@@ -602,7 +775,13 @@ async function streamChat({
     const { chat } = await WorkspaceChats.new({
       workspaceId: workspace.id,
       prompt: message,
-      response: { text: completeText, sources, type: chatMode, metrics },
+      response: {
+        text: completeText,
+        sources,
+        type: chatMode,
+        metrics,
+        attachments,
+      },
       threadId: thread?.id || null,
       apiSessionId: sessionId,
       user,
@@ -615,6 +794,7 @@ async function streamChat({
       error: false,
       chatId: chat.id,
       metrics,
+      sources,
     });
     return;
   }

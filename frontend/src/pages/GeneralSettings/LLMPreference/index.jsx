@@ -29,7 +29,13 @@ import AWSBedrockLogo from "@/media/llmprovider/bedrock.png";
 import DeepSeekLogo from "@/media/llmprovider/deepseek.png";
 import APIPieLogo from "@/media/llmprovider/apipie.png";
 import XAILogo from "@/media/llmprovider/xai.png";
+import ZAiLogo from "@/media/llmprovider/zai.png";
 import NvidiaNimLogo from "@/media/llmprovider/nvidia-nim.png";
+import PPIOLogo from "@/media/llmprovider/ppio.png";
+import DellProAiStudioLogo from "@/media/llmprovider/dpais.png";
+import MoonshotAiLogo from "@/media/llmprovider/moonshotai.png";
+import CometApiLogo from "@/media/llmprovider/cometapi.png";
+import FoundryLogo from "@/media/llmprovider/foundry-local.png";
 
 import PreLoader from "@/components/Preloader";
 import OpenAiOptions from "@/components/LLMSelection/OpenAiOptions";
@@ -38,10 +44,10 @@ import AzureAiOptions from "@/components/LLMSelection/AzureAiOptions";
 import AnthropicAiOptions from "@/components/LLMSelection/AnthropicAiOptions";
 import LMStudioOptions from "@/components/LLMSelection/LMStudioOptions";
 import LocalAiOptions from "@/components/LLMSelection/LocalAiOptions";
-import NativeLLMOptions from "@/components/LLMSelection/NativeLLMOptions";
 import GeminiLLMOptions from "@/components/LLMSelection/GeminiLLMOptions";
 import OllamaLLMOptions from "@/components/LLMSelection/OllamaLLMOptions";
 import NovitaLLMOptions from "@/components/LLMSelection/NovitaLLMOptions";
+import CometApiLLMOptions from "@/components/LLMSelection/CometApiLLMOptions";
 import TogetherAiOptions from "@/components/LLMSelection/TogetherAiOptions";
 import FireworksAiOptions from "@/components/LLMSelection/FireworksAiOptions";
 import MistralOptions from "@/components/LLMSelection/MistralOptions";
@@ -57,7 +63,12 @@ import AWSBedrockLLMOptions from "@/components/LLMSelection/AwsBedrockLLMOptions
 import DeepSeekOptions from "@/components/LLMSelection/DeepSeekOptions";
 import ApiPieLLMOptions from "@/components/LLMSelection/ApiPieOptions";
 import XAILLMOptions from "@/components/LLMSelection/XAiLLMOptions";
+import ZAiLLMOptions from "@/components/LLMSelection/ZAiLLMOptions";
 import NvidiaNimOptions from "@/components/LLMSelection/NvidiaNimOptions";
+import PPIOLLMOptions from "@/components/LLMSelection/PPIOLLMOptions";
+import DellProAiStudioOptions from "@/components/LLMSelection/DPAISOptions";
+import MoonshotAiOptions from "@/components/LLMSelection/MoonshotAiOptions";
+import FoundryOptions from "@/components/LLMSelection/FoundryOptions";
 
 import LLMItem from "@/components/LLMSelection/LLMItem";
 import { CaretUpDown, MagnifyingGlass, X } from "@phosphor-icons/react";
@@ -97,12 +108,12 @@ export const AVAILABLE_LLM_PROVIDERS = [
     requiredConfig: ["GeminiLLMApiKey"],
   },
   {
-    name: "Nvidia NIM",
+    name: "NVIDIA NIM",
     value: "nvidia-nim",
     logo: NvidiaNimLogo,
     options: (settings) => <NvidiaNimOptions settings={settings} />,
     description:
-      "Run full parameter LLMs directly on your GPU using Nvidia's inference microservice via Docker.",
+      "Run full parameter LLMs directly on your NVIDIA RTX GPU using NVIDIA NIM.",
     requiredConfig: ["NvidiaNimLLMBasePath"],
   },
   {
@@ -127,13 +138,17 @@ export const AVAILABLE_LLM_PROVIDERS = [
     requiredConfig: ["OllamaLLMBasePath"],
   },
   {
-    name: "Novita AI",
-    value: "novita",
-    logo: NovitaLogo,
-    options: (settings) => <NovitaLLMOptions settings={settings} />,
+    name: "Dell Pro AI Studio",
+    value: "dpais",
+    logo: DellProAiStudioLogo,
+    options: (settings) => <DellProAiStudioOptions settings={settings} />,
     description:
-      "Reliable, Scalable, and Cost-Effective for LLMs from Novita AI",
-    requiredConfig: ["NovitaLLMApiKey"],
+      "Run powerful LLMs quickly on NPU powered by Dell Pro AI Studio.",
+    requiredConfig: [
+      "DellProAiStudioBasePath",
+      "DellProAiStudioModelPref",
+      "DellProAiStudioTokenLimit",
+    ],
   },
   {
     name: "LM Studio",
@@ -248,6 +263,15 @@ export const AVAILABLE_LLM_PROVIDERS = [
     requiredConfig: ["DeepSeekApiKey"],
   },
   {
+    name: "PPIO",
+    value: "ppio",
+    logo: PPIOLogo,
+    options: (settings) => <PPIOLLMOptions settings={settings} />,
+    description:
+      "Run stable and cost-efficient open-source LLM APIs, such as DeepSeek, Llama, Qwen etc.",
+    requiredConfig: ["PPIOApiKey"],
+  },
+  {
     name: "AWS Bedrock",
     value: "bedrock",
     logo: AWSBedrockLogo,
@@ -269,6 +293,59 @@ export const AVAILABLE_LLM_PROVIDERS = [
     requiredConfig: ["ApipieLLMApiKey", "ApipieLLMModelPref"],
   },
   {
+    name: "Moonshot AI",
+    value: "moonshotai",
+    logo: MoonshotAiLogo,
+    options: (settings) => <MoonshotAiOptions settings={settings} />,
+    description: "Run Moonshot AI's powerful LLMs.",
+    requiredConfig: ["MoonshotAiApiKey"],
+  },
+  {
+    name: "Novita AI",
+    value: "novita",
+    logo: NovitaLogo,
+    options: (settings) => <NovitaLLMOptions settings={settings} />,
+    description:
+      "Reliable, Scalable, and Cost-Effective for LLMs from Novita AI",
+    requiredConfig: ["NovitaLLMApiKey"],
+  },
+  {
+    name: "CometAPI",
+    value: "cometapi",
+    logo: CometApiLogo,
+    options: (settings) => <CometApiLLMOptions settings={settings} />,
+    description: "500+ AI Models all in one API.",
+    requiredConfig: ["CometApiLLMApiKey"],
+  },
+  {
+    name: "Microsoft Foundry Local",
+    value: "foundry",
+    logo: FoundryLogo,
+    options: (settings) => <FoundryOptions settings={settings} />,
+    description: "Run Microsoft's Foundry models locally.",
+    requiredConfig: [
+      "FoundryBasePath",
+      "FoundryModelPref",
+      "FoundryModelTokenLimit",
+    ],
+  },
+  {
+    name: "xAI",
+    value: "xai",
+    logo: XAILogo,
+    options: (settings) => <XAILLMOptions settings={settings} />,
+    description: "Run xAI's powerful LLMs like Grok-2 and more.",
+    requiredConfig: ["XAIApiKey", "XAIModelPref"],
+  },
+  {
+    name: "Z.AI",
+    value: "zai",
+    logo: ZAiLogo,
+    options: (settings) => <ZAiLLMOptions settings={settings} />,
+    description: "Run Z.AI's powerful GLM models.",
+    requiredConfig: ["ZAiApiKey"],
+  },
+  {
     name: "Generic OpenAI",
     value: "generic-openai",
     logo: GenericOpenAiLogo,
@@ -282,24 +359,6 @@ export const AVAILABLE_LLM_PROVIDERS = [
       "GenericOpenAiKey",
     ],
   },
-  {
-    name: "xAI",
-    value: "xai",
-    logo: XAILogo,
-    options: (settings) => <XAILLMOptions settings={settings} />,
-    description: "Run xAI's powerful LLMs like Grok-2 and more.",
-    requiredConfig: ["XAIApiKey", "XAIModelPref"],
-  },
-
-  {
-    name: "Native",
-    value: "native",
-    logo: AnythingLLMIcon,
-    options: (settings) => <NativeLLMOptions settings={settings} />,
-    description:
-      "Use a downloaded custom Llama model for chatting on this AnythingLLM instance.",
-    requiredConfig: [],
-  },
 ];
 
 export default function GeneralLLMPreference() {
@@ -312,7 +371,6 @@ export default function GeneralLLMPreference() {
   const [selectedLLM, setSelectedLLM] = useState(null);
   const [searchMenuOpen, setSearchMenuOpen] = useState(false);
   const searchInputRef = useRef(null);
-  const isHosted = window.location.hostname.includes("useanything.com");
   const { t } = useTranslation();
 
   const handleSubmit = async (e) => {
@@ -420,9 +478,9 @@ export default function GeneralLLMPreference() {
                   />
                 )}
                 {searchMenuOpen ? (
-                  <div className="absolute top-0 left-0 w-full max-w-[640px] max-h-[310px] overflow-auto white-scrollbar min-h-[64px] bg-theme-settings-input-bg rounded-lg flex flex-col justify-between cursor-pointer border-2 border-primary-button z-20">
+                  <div className="absolute top-0 left-0 w-full max-w-[640px] max-h-[310px] min-h-[64px] bg-theme-settings-input-bg rounded-lg flex flex-col justify-between cursor-pointer border-2 border-primary-button z-20">
                     <div className="w-full flex flex-col gap-y-1">
-                      <div className="flex items-center sticky top-0 border-b border-[#9CA3AF] mx-4 bg-theme-settings-input-bg">
+                      <div className="flex items-center sticky top-0 z-10 border-b border-[#9CA3AF] mx-4 bg-theme-settings-input-bg">
                         <MagnifyingGlass
                           size={20}
                           weight="bold"
@@ -447,9 +505,8 @@ export default function GeneralLLMPreference() {
                           onClick={handleXButton}
                         />
                       </div>
-                      <div className="flex-1 pl-4 pr-2 flex flex-col gap-y-1 overflow-y-auto white-scrollbar pb-4">
+                      <div className="flex-1 pl-4 pr-2 flex flex-col gap-y-1 overflow-y-auto white-scrollbar pb-4 max-h-[245px]">
                         {filteredLLMs.map((llm) => {
-                          if (llm.value === "native" && isHosted) return null;
                           return (
                             <LLMItem
                               key={llm.name}

@@ -3,6 +3,7 @@ const { toChunks } = require("../../helpers");
 class OpenAiEmbedder {
   constructor() {
     if (!process.env.OPEN_AI_KEY) throw new Error("No OpenAI API key was set.");
+    this.className = "OpenAiEmbedder";
     const { OpenAI: OpenAIApi } = require("openai");
     this.openai = new OpenAIApi({
       apiKey: process.env.OPEN_AI_KEY,
@@ -16,6 +17,10 @@ class OpenAiEmbedder {
     this.embeddingMaxChunkLength = 8_191;
   }
 
+  log(text, ...args) {
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
+  }
+
   async embedTextInput(textInput) {
     const result = await this.embedChunks(
       Array.isArray(textInput) ? textInput : [textInput]
@@ -24,6 +29,8 @@ class OpenAiEmbedder {
   }
 
   async embedChunks(textChunks = []) {
+    this.log(`Embedding ${textChunks.length} chunks...`);
+
     // Because there is a hard POST limit on how many chunks can be sent at once to OpenAI (~8mb)
     // we concurrently execute each max batch of text chunks possible.
     // Refer to constructor maxConcurrentChunks for more info.

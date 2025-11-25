@@ -97,7 +97,7 @@ const Milvus = {
     if (!isExists) {
       if (!dimensions)
         throw new Error(
-          `Milvus:getOrCreateCollection Unable to infer vector dimension from input. Open an issue on Github for support.`
+          `Milvus:getOrCreateCollection Unable to infer vector dimension from input. Open an issue on GitHub for support.`
         );
 
       await client.createCollection({
@@ -118,7 +118,7 @@ const Milvus = {
           },
           {
             name: "metadata",
-            decription: "metadata",
+            description: "metadata",
             data_type: DataType.JSON,
           },
         ],
@@ -147,7 +147,7 @@ const Milvus = {
       if (!pageContent || pageContent.length == 0) return false;
 
       console.log("Adding new vectorized document into namespace", namespace);
-      if (skipCache) {
+      if (!skipCache) {
         const cacheResult = await cachedVectorInformation(fullFilePath);
         if (cacheResult.exists) {
           const { client } = await this.connect();
@@ -204,10 +204,11 @@ const Milvus = {
           20
         ),
         chunkHeaderMeta: TextSplitter.buildHeaderMeta(metadata),
+        chunkPrefix: EmbedderEngine?.embeddingPrefix,
       });
       const textChunks = await textSplitter.splitText(pageContent);
 
-      console.log("Chunks created from document:", textChunks.length);
+      console.log("Snippets created from document:", textChunks.length);
       const documentVectors = [];
       const vectors = [];
       const vectorValues = await EmbedderEngine.embedChunks(textChunks);
@@ -312,32 +313,33 @@ const Milvus = {
     }
 
     const queryVector = await LLMConnector.embedTextInput(input);
-    const { contextTexts, sourceDocuments } = await this.similarityResponse(
+    const { contextTexts, sourceDocuments } = await this.similarityResponse({
       client,
       namespace,
       queryVector,
       similarityThreshold,
       topN,
-      filterIdentifiers
-    );
-
-    const sources = sourceDocuments.map((metadata, i) => {
-      return { ...metadata, text: contextTexts[i] };
+      filterIdentifiers,
     });
+
+    const sources = sourceDocuments.map((doc, i) => {
+      return { metadata: doc, text: contextTexts[i] };
+    });
+
     return {
       contextTexts,
       sources: this.curateSources(sources),
       message: false,
     };
   },
-  similarityResponse: async function (
+  similarityResponse: async function ({
     client,
     namespace,
     queryVector,
     similarityThreshold = 0.25,
     topN = 4,
-    filterIdentifiers = []
-  ) {
+    filterIdentifiers = [],
+  }) {
     const result = {
       contextTexts: [],
       sourceDocuments: [],
@@ -358,7 +360,10 @@ const Milvus = {
       }
 
       result.contextTexts.push(match.metadata.text);
-      result.sourceDocuments.push(match);
+      result.sourceDocuments.push({
+        ...match.metadata,
+        score: match.score,
+      });
       result.scores.push(match.score);
     });
     return result;
@@ -394,13 +399,10 @@ const Milvus = {
       if (Object.keys(metadata).length > 0) {
         documents.push({
           ...metadata,
-          ...(source.hasOwnProperty("pageContent")
-            ? { text: source.pageContent }
-            : {}),
+          ...(source.text ? { text: source.text } : {}),
         });
       }
     }
-
     return documents;
   },
 };

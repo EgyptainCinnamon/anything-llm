@@ -4,6 +4,7 @@ const {
 } = require("../../helpers/chat/LLMPerformanceMonitor");
 const {
   handleDefaultStreamResponseV2,
+  formatChatHistory,
 } = require("../../helpers/chat/responses");
 const { MODEL_MAP } = require("../modelMap");
 
@@ -11,6 +12,7 @@ class XAiLLM {
   constructor(embedder = null, modelPreference = null) {
     if (!process.env.XAI_LLM_API_KEY)
       throw new Error("No xAI API key was set.");
+    this.className = "XAiLLM";
     const { OpenAI: OpenAIApi } = require("openai");
 
     this.openai = new OpenAIApi({
@@ -27,6 +29,13 @@ class XAiLLM {
 
     this.embedder = embedder ?? new NativeEmbedder();
     this.defaultTemp = 0.7;
+    this.log(
+      `Initialized ${this.model} with context window ${this.promptWindowLimit()}`
+    );
+  }
+
+  log(text, ...args) {
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   #appendContext(contextTexts = []) {
@@ -46,20 +55,15 @@ class XAiLLM {
   }
 
   static promptWindowLimit(modelName) {
-    return MODEL_MAP.xai[modelName] ?? 131_072;
+    return MODEL_MAP.get("xai", modelName) ?? 131_072;
   }
 
   promptWindowLimit() {
-    return MODEL_MAP.xai[this.model] ?? 131_072;
+    return MODEL_MAP.get("xai", this.model) ?? 131_072;
   }
 
-  isValidChatCompletionModel(modelName = "") {
-    switch (modelName) {
-      case "grok-beta":
-        return true;
-      default:
-        return false;
-    }
+  isValidChatCompletionModel(_modelName = "") {
+    return true;
   }
 
   /**
@@ -103,7 +107,7 @@ class XAiLLM {
     };
     return [
       prompt,
-      ...chatHistory,
+      ...formatChatHistory(chatHistory, this.#generateContent),
       {
         role: "user",
         content: this.#generateContent({ userPrompt, attachments }),

@@ -2,6 +2,7 @@ const { v4 } = require("uuid");
 const {
   writeResponseChunk,
   clientAbortedHandler,
+  formatChatHistory,
 } = require("../../helpers/chat/responses");
 const { NativeEmbedder } = require("../../EmbeddingEngines/native");
 const { MODEL_MAP } = require("../modelMap");
@@ -14,6 +15,7 @@ class AnthropicLLM {
     if (!process.env.ANTHROPIC_API_KEY)
       throw new Error("No Anthropic API key was set.");
 
+    this.className = "AnthropicLLM";
     // Docs: https://www.npmjs.com/package/@anthropic-ai/sdk
     const AnthropicAI = require("@anthropic-ai/sdk");
     const anthropic = new AnthropicAI({
@@ -21,7 +23,9 @@ class AnthropicLLM {
     });
     this.anthropic = anthropic;
     this.model =
-      modelPreference || process.env.ANTHROPIC_MODEL_PREF || "claude-2.0";
+      modelPreference ||
+      process.env.ANTHROPIC_MODEL_PREF ||
+      "claude-3-5-sonnet-20241022";
     this.limits = {
       history: this.promptWindowLimit() * 0.15,
       system: this.promptWindowLimit() * 0.15,
@@ -30,6 +34,13 @@ class AnthropicLLM {
 
     this.embedder = embedder ?? new NativeEmbedder();
     this.defaultTemp = 0.7;
+    this.log(
+      `Initialized with ${this.model}. Cache ${this.cacheControl ? `enabled (${this.cacheControl.ttl})` : "disabled"}`
+    );
+  }
+
+  log(text, ...args) {
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   streamingEnabled() {
@@ -37,28 +48,57 @@ class AnthropicLLM {
   }
 
   static promptWindowLimit(modelName) {
-    return MODEL_MAP.anthropic[modelName] ?? 100_000;
+    return MODEL_MAP.get("anthropic", modelName) ?? 100_000;
   }
 
   promptWindowLimit() {
-    return MODEL_MAP.anthropic[this.model] ?? 100_000;
+    return MODEL_MAP.get("anthropic", this.model) ?? 100_000;
   }
 
-  isValidChatCompletionModel(modelName = "") {
-    const validModels = [
-      "claude-instant-1.2",
-      "claude-2.0",
-      "claude-2.1",
-      "claude-3-haiku-20240307",
-      "claude-3-sonnet-20240229",
-      "claude-3-opus-latest",
-      "claude-3-5-haiku-latest",
-      "claude-3-5-haiku-20241022",
-      "claude-3-5-sonnet-latest",
-      "claude-3-5-sonnet-20241022",
-      "claude-3-5-sonnet-20240620",
+  isValidChatCompletionModel(_modelName = "") {
+    return true;
+  }
+
+  /**
+   * Parses the cache control ENV variable
+   *
+   * If caching is enabled, we can pass less than 1024 tokens and Anthropic will just
+   * ignore it unless it is above the model's minimum. Since this feature is opt-in
+   * we can safely assume that if caching is enabled that we should just pass the content as is.
+   * https://docs.claude.com/en/docs/build-with-claude/prompt-caching#cache-limitations
+   *
+   * @param {string} value - The ENV value (5m or 1h)
+   * @returns {null|{type: "ephemeral", ttl: "5m" | "1h"}} Cache control configuration
+   */
+  get cacheControl() {
+    // Store result in instance variable to avoid recalculating
+    if (this._cacheControl) return this._cacheControl;
+
+    if (!process.env.ANTHROPIC_CACHE_CONTROL) this._cacheControl = null;
+    else {
+      const normalized =
+        process.env.ANTHROPIC_CACHE_CONTROL.toLowerCase().trim();
+      if (["5m", "1h"].includes(normalized))
+        this._cacheControl = { type: "ephemeral", ttl: normalized };
+      else this._cacheControl = null;
+    }
+    return this._cacheControl;
+  }
+
+  /**
+   * Builds system parameter with cache control if applicable
+   * @param {string} systemContent - The system prompt content
+   * @returns {string|array} System parameter for API call
+   */
+  #buildSystemPrompt(systemContent) {
+    if (!systemContent || !this.cacheControl) return systemContent;
+    return [
+      {
+        type: "text",
+        text: systemContent,
+        cache_control: this.cacheControl,
+      },
     ];
-    return validModels.includes(modelName);
   }
 
   /**
@@ -99,7 +139,7 @@ class AnthropicLLM {
 
     return [
       prompt,
-      ...chatHistory,
+      ...formatChatHistory(chatHistory, this.#generateContent),
       {
         role: "user",
         content: this.#generateContent({ userPrompt, attachments }),
@@ -108,17 +148,13 @@ class AnthropicLLM {
   }
 
   async getChatCompletion(messages = null, { temperature = 0.7 }) {
-    if (!this.isValidChatCompletionModel(this.model))
-      throw new Error(
-        `Anthropic chat: ${this.model} is not valid for chat completion!`
-      );
-
     try {
+      const systemContent = messages[0].content;
       const result = await LLMPerformanceMonitor.measureAsyncFunction(
         this.anthropic.messages.create({
           model: this.model,
           max_tokens: 4096,
-          system: messages[0].content, // Strip out the system message
+          system: this.#buildSystemPrompt(systemContent),
           messages: messages.slice(1), // Pop off the system message
           temperature: Number(temperature ?? this.defaultTemp),
         })
@@ -126,6 +162,7 @@ class AnthropicLLM {
 
       const promptTokens = result.output.usage.input_tokens;
       const completionTokens = result.output.usage.output_tokens;
+
       return {
         textResponse: result.output.content[0].text,
         metrics: {
@@ -143,16 +180,12 @@ class AnthropicLLM {
   }
 
   async streamGetChatCompletion(messages = null, { temperature = 0.7 }) {
-    if (!this.isValidChatCompletionModel(this.model))
-      throw new Error(
-        `Anthropic chat: ${this.model} is not valid for chat completion!`
-      );
-
+    const systemContent = messages[0].content;
     const measuredStreamRequest = await LLMPerformanceMonitor.measureStream(
       this.anthropic.messages.stream({
         model: this.model,
         max_tokens: 4096,
-        system: messages[0].content, // Strip out the system message
+        system: this.#buildSystemPrompt(systemContent),
         messages: messages.slice(1), // Pop off the system message
         temperature: Number(temperature ?? this.defaultTemp),
       }),

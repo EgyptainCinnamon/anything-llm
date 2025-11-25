@@ -32,12 +32,15 @@ const {
 } = require("../utils/files/pfp");
 const { getTTSProvider } = require("../utils/TextToSpeech");
 const { WorkspaceThread } = require("../models/workspaceThread");
+
 const truncate = require("truncate");
 const { purgeDocument } = require("../utils/files/purgeDocument");
+const { getModelTag } = require("./utils");
+const { searchWorkspaceAndThreads } = require("../utils/helpers/search");
+const { workspaceParsedFilesEndpoints } = require("./workspacesParsedFiles");
 
 function workspaceEndpoints(app) {
   if (!app) return;
-
   const responseCache = new Map();
 
   app.post(
@@ -56,6 +59,7 @@ function workspaceEndpoints(app) {
             Embedder: process.env.EMBEDDING_ENGINE || "inherit",
             VectorDbSelection: process.env.VECTOR_DB || "lancedb",
             TTSSelection: process.env.TTS_PROVIDER || "native",
+            LLMModel: getModelTag(),
           },
           user?.id
         );
@@ -94,6 +98,7 @@ function workspaceEndpoints(app) {
           response.sendStatus(400).end();
           return;
         }
+
         await Workspace.trackChange(currWorkspace, data, user);
         const { workspace, message } = await Workspace.update(
           currWorkspace.id,
@@ -825,7 +830,6 @@ function workspaceEndpoints(app) {
             : "Forked Thread",
         });
 
-        await Telemetry.sendTelemetry("thread_forked");
         await EventLogs.logEvent(
           "thread_forked",
           {
@@ -974,6 +978,92 @@ function workspaceEndpoints(app) {
       }
     }
   );
+
+  app.get(
+    "/workspace/:slug/prompt-history",
+    [validatedRequest, flexUserRoleValid([ROLES.all]), validWorkspaceSlug],
+    async (_, response) => {
+      try {
+        response.status(200).json({
+          history: await Workspace.promptHistory({
+            workspaceId: response.locals.workspace.id,
+          }),
+        });
+      } catch (error) {
+        console.error("Error fetching prompt history:", error);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  app.delete(
+    "/workspace/:slug/prompt-history",
+    [
+      validatedRequest,
+      flexUserRoleValid([ROLES.admin, ROLES.manager]),
+      validWorkspaceSlug,
+    ],
+    async (_, response) => {
+      try {
+        response.status(200).json({
+          success: await Workspace.deleteAllPromptHistory({
+            workspaceId: response.locals.workspace.id,
+          }),
+        });
+      } catch (error) {
+        console.error("Error clearing prompt history:", error);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  app.delete(
+    "/workspace/prompt-history/:id",
+    [
+      validatedRequest,
+      flexUserRoleValid([ROLES.admin, ROLES.manager]),
+      validWorkspaceSlug,
+    ],
+    async (request, response) => {
+      try {
+        const { id } = request.params;
+        response.status(200).json({
+          success: await Workspace.deletePromptHistory({
+            workspaceId: response.locals.workspace.id,
+            id: Number(id),
+          }),
+        });
+      } catch (error) {
+        console.error("Error deleting prompt history:", error);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  /**
+   * Searches for workspaces and threads by thread name or workspace name.
+   * Only returns assets owned by the user (if multi-user mode is enabled).
+   */
+  app.post(
+    "/workspace/search",
+    [validatedRequest, flexUserRoleValid([ROLES.all])],
+    async (request, response) => {
+      try {
+        const { searchTerm } = reqBody(request);
+        const searchResults = await searchWorkspaceAndThreads(
+          searchTerm,
+          response.locals?.user
+        );
+        response.status(200).json(searchResults);
+      } catch (error) {
+        console.error("Error searching for workspaces:", error);
+        response.sendStatus(500).end();
+      }
+    }
+  );
+
+  // Parsed Files in separate endpoint just to keep the workspace endpoints clean
+  workspaceParsedFilesEndpoints(app);
 }
 
 module.exports = { workspaceEndpoints };

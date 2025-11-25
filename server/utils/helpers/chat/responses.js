@@ -164,6 +164,11 @@ function convertToChatHistory(history = []) {
   return formattedHistory.flat();
 }
 
+/**
+ * Converts a chat history to a prompt history.
+ * @param {Object[]} history - The chat history to convert
+ * @returns {{role: string, content: string, attachments?: import("..").Attachment}[]}
+ */
 function convertToPromptHistory(history = []) {
   const formattedHistory = [];
   for (const record of history) {
@@ -185,16 +190,81 @@ function convertToPromptHistory(history = []) {
     }
 
     formattedHistory.push([
-      { role: "user", content: prompt },
-      { role: "assistant", content: data.text },
+      {
+        role: "user",
+        content: prompt,
+        // if there are attachments, add them as a property to the user message so we can reuse them in chat history later if supported by the llm.
+        ...(data?.attachments?.length > 0
+          ? { attachments: data?.attachments }
+          : {}),
+      },
+      {
+        role: "assistant",
+        content: data.text,
+      },
     ]);
   }
   return formattedHistory.flat();
 }
 
+/**
+ * Safely stringifies any object containing BigInt values
+ * @param {*} obj - Anything to stringify that might contain BigInt values
+ * @returns {string} JSON string with BigInt values converted to strings
+ */
+function safeJSONStringify(obj) {
+  return JSON.stringify(obj, (_, value) => {
+    if (typeof value === "bigint") return value.toString();
+    return value;
+  });
+}
+
 function writeResponseChunk(response, data) {
-  response.write(`data: ${JSON.stringify(data)}\n\n`);
+  response.write(`data: ${safeJSONStringify(data)}\n\n`);
   return;
+}
+
+/**
+ * Formats the chat history to re-use attachments in the chat history
+ * that might have existed in the conversation earlier.
+ * @param {{role:string, content:string, attachments?: Object[]}[]} chatHistory
+ * @param {function} formatterFunction - The function to format the chat history from the llm provider
+ * @param {('asProperty'|'spread')} mode - "asProperty" or "spread". Determines how the content is formatted in the message object.
+ * @returns {object[]}
+ */
+function formatChatHistory(
+  chatHistory = [],
+  formatterFunction,
+  mode = "asProperty"
+) {
+  return chatHistory.map((historicalMessage) => {
+    if (
+      historicalMessage?.role !== "user" || // Only user messages can have attachments
+      !historicalMessage?.attachments || // If there are no attachments, we can skip this
+      !historicalMessage.attachments.length // If there is an array but it is empty, we can skip this
+    )
+      return historicalMessage;
+
+    // Some providers, like Ollama, expect the content to be embedded in the message object.
+    if (mode === "spread") {
+      return {
+        role: historicalMessage.role,
+        ...formatterFunction({
+          userPrompt: historicalMessage.content,
+          attachments: historicalMessage.attachments,
+        }),
+      };
+    }
+
+    // Most providers expect the content to be a property of the message object formatted like OpenAI models.
+    return {
+      role: historicalMessage.role,
+      content: formatterFunction({
+        userPrompt: historicalMessage.content,
+        attachments: historicalMessage.attachments,
+      }),
+    };
+  });
 }
 
 module.exports = {
@@ -203,4 +273,6 @@ module.exports = {
   convertToPromptHistory,
   writeResponseChunk,
   clientAbortedHandler,
+  formatChatHistory,
+  safeJSONStringify,
 };

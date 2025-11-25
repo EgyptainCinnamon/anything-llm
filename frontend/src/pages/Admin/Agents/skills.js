@@ -23,27 +23,30 @@ export const defaultSkills = {
     component: DefaultSkillPanel,
     icon: Brain,
     image: RAGImage,
+    skill: "rag-memory",
   },
-  "view-summarize": {
+  "document-summarizer": {
     title: "View & summarize documents",
     description:
       "Allow the agent to list and summarize the content of workspace files currently embedded.",
     component: DefaultSkillPanel,
     icon: File,
     image: SummarizeImage,
+    skill: "document-summarizer",
   },
-  "scrape-websites": {
+  "web-scraping": {
     title: "Scrape websites",
     description: "Allow the agent to visit and scrape the content of websites.",
     component: DefaultSkillPanel,
     icon: Browser,
     image: ScrapeWebsitesImage,
+    skill: "web-scraping",
   },
 };
 
 export const configurableSkills = {
   "save-file-to-browser": {
-    title: "Generate & save files to browser",
+    title: "Generate & save files",
     description:
       "Enable the default agent to generate and write to files that can be saved to your computer.",
     component: GenericSkillPanel,

@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const { DocumentManager } = require("../DocumentManager");
 const { WorkspaceChats } = require("../../models/workspaceChats");
+const { WorkspaceParsedFiles } = require("../../models/workspaceParsedFiles");
 const { getVectorDbClass, getLLMProvider } = require("../helpers");
 const { writeResponseChunk } = require("../helpers/chat/responses");
 const { grepAgents } = require("./agents");
@@ -42,7 +43,7 @@ async function streamChatWithWorkspace(
   const isAgentChat = await grepAgents({
     uuid,
     response,
-    message,
+    message: updatedMessage,
     user,
     workspace,
     thread,
@@ -130,15 +131,32 @@ async function streamChatWithWorkspace(
       });
     });
 
+  // Inject any parsed files for this workspace/thread/user
+  const parsedFiles = await WorkspaceParsedFiles.getContextFiles(
+    workspace,
+    thread || null,
+    user || null
+  );
+  parsedFiles.forEach((doc) => {
+    const { pageContent, ...metadata } = doc;
+    contextTexts.push(doc.pageContent);
+    sources.push({
+      text:
+        pageContent.slice(0, 1_000) + "...continued on in source document...",
+      ...metadata,
+    });
+  });
+
   const vectorSearchResults =
     embeddingsCount !== 0
       ? await VectorDb.performSimilaritySearch({
           namespace: workspace.slug,
-          input: message,
+          input: updatedMessage,
           LLMConnector,
           similarityThreshold: workspace?.similarityThreshold,
           topN: workspace?.topN,
           filterIdentifiers: pinnedDocIdentifiers,
+          rerank: workspace?.vectorSearchMode === "rerank",
         })
       : {
           contextTexts: [],
@@ -212,7 +230,7 @@ async function streamChatWithWorkspace(
   // and build system messages based on inputs and history.
   const messages = await LLMConnector.compressMessages(
     {
-      systemPrompt: chatPrompt(workspace),
+      systemPrompt: await chatPrompt(workspace, user),
       userPrompt: updatedMessage,
       contextTexts,
       chatHistory,
@@ -230,6 +248,7 @@ async function streamChatWithWorkspace(
     const { textResponse, metrics: performanceMetrics } =
       await LLMConnector.getChatCompletion(messages, {
         temperature: workspace?.openAiTemp ?? LLMConnector.defaultTemp,
+        user: user,
       });
 
     completeText = textResponse;
@@ -246,6 +265,7 @@ async function streamChatWithWorkspace(
   } else {
     const stream = await LLMConnector.streamGetChatCompletion(messages, {
       temperature: workspace?.openAiTemp ?? LLMConnector.defaultTemp,
+      user: user,
     });
     completeText = await LLMConnector.handleStream(response, stream, {
       uuid,

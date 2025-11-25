@@ -12,11 +12,13 @@ const { EventLogs } = require("../../../models/eventLogs");
 const {
   OpenAICompatibleChat,
 } = require("../../../utils/chats/openaiCompatible");
+const { getModelTag } = require("../../utils");
+const { extractTextContent, extractAttachments } = require("./helpers");
 
 function apiOpenAICompatibleEndpoints(app) {
   if (!app) return;
 
-  app.get("/v1/openai/models", [validApiKey], async (request, response) => {
+  app.get("/v1/openai/models", [validApiKey], async (_, response) => {
     /*
     #swagger.tags = ['OpenAI Compatible Endpoints']
     #swagger.description = 'Get all available "models" which are workspaces you can use for chatting.'
@@ -26,22 +28,19 @@ function apiOpenAICompatibleEndpoints(app) {
           "schema": {
             "type": "object",
             "example": {
-              "models": [
+              "object": "list",
+              "data": [
                 {
-                  "name": "Sample workspace",
-                  "model": "sample-workspace",
-                  "llm": {
-                    "provider": "ollama",
-                    "model": "llama3:8b"
-                  }
+                  "id": "model-id-0",
+                  "object": "model",
+                  "created": 1686935002,
+                  "owned_by": "organization-owner"
                 },
                 {
-                  "name": "Second workspace",
-                  "model": "workspace-2",
-                  "llm": {
-                    "provider": "openai",
-                    "model": "gpt-3.5-turbo"
-                  }
+                  "id": "model-id-1",
+                  "object": "model",
+                  "created": 1686935002,
+                  "owned_by": "organization-owner"
                 }
               ]
             }
@@ -65,15 +64,16 @@ function apiOpenAICompatibleEndpoints(app) {
           model: workspace?.chatModel,
         });
         data.push({
-          name: workspace.name,
-          model: workspace.slug,
-          llm: {
-            provider: provider,
-            model: LLMProvider.model,
-          },
+          id: workspace.slug,
+          object: "model",
+          created: Math.floor(Number(new Date(workspace.createdAt)) / 1000),
+          owned_by: `${provider}-${LLMProvider.model}`,
         });
       }
-      return response.status(200).json({ data });
+      return response.status(200).json({
+        object: "list",
+        data,
+      });
     } catch (e) {
       console.error(e.message, e);
       response.sendStatus(500).end();
@@ -144,7 +144,8 @@ function apiOpenAICompatibleEndpoints(app) {
             workspace,
             systemPrompt,
             history,
-            prompt: userMessage.content,
+            prompt: extractTextContent(userMessage.content),
+            attachments: extractAttachments(userMessage.content),
             temperature: Number(temperature),
           });
 
@@ -172,7 +173,8 @@ function apiOpenAICompatibleEndpoints(app) {
           workspace,
           systemPrompt,
           history,
-          prompt: userMessage.content,
+          prompt: extractTextContent(userMessage.content),
+          attachments: extractAttachments(userMessage.content),
           temperature: Number(temperature),
           response,
         });
@@ -181,6 +183,7 @@ function apiOpenAICompatibleEndpoints(app) {
           Embedder: process.env.EMBEDDING_ENGINE || "inherit",
           VectorDbSelection: process.env.VECTOR_DB || "lancedb",
           TTSSelection: process.env.TTS_PROVIDER || "native",
+          LLMModel: getModelTag(),
         });
         await EventLogs.logEvent("api_sent_chat", {
           workspaceName: workspace?.name,
@@ -207,7 +210,7 @@ function apiOpenAICompatibleEndpoints(app) {
           content: {
             "application/json": {
               example: {
-                inputs: [
+                input: [
                 "This is my first string to embed",
                 "This is my second string to embed",
                 ],
@@ -223,13 +226,23 @@ function apiOpenAICompatibleEndpoints(app) {
       }
       */
       try {
-        const { inputs = [] } = reqBody(request);
-        const validArray = inputs.every((input) => typeof input === "string");
-        if (!validArray)
-          throw new Error("All inputs to be embedded must be strings.");
+        const body = reqBody(request);
+        // Support input or "inputs" (for backwards compatibility) as an array of strings or a single string
+        // TODO: "inputs" key support will eventually be fully removed.
+        let input = body?.input || body?.inputs || [];
+        // if input is not an array, make it an array and force to string content
+        if (!Array.isArray(input)) input = [String(input)];
+
+        if (Array.isArray(input)) {
+          if (input.length === 0)
+            throw new Error("Input array cannot be empty.");
+          const validArray = input.every((text) => typeof text === "string");
+          if (!validArray)
+            throw new Error("All inputs to be embedded must be strings.");
+        }
 
         const Embedder = getEmbeddingEngineSelection();
-        const embeddings = await Embedder.embedChunks(inputs);
+        const embeddings = await Embedder.embedChunks(input);
         const data = [];
         embeddings.forEach((embedding, index) => {
           data.push({

@@ -74,14 +74,14 @@ const Weaviate = {
       return 0;
     }
   },
-  similarityResponse: async function (
+  similarityResponse: async function ({
     client,
     namespace,
     queryVector,
     similarityThreshold = 0.25,
     topN = 4,
-    filterIdentifiers = []
-  ) {
+    filterIdentifiers = [],
+  }) {
     const result = {
       contextTexts: [],
       sourceDocuments: [],
@@ -193,7 +193,7 @@ const Weaviate = {
       if (!pageContent || pageContent.length == 0) return false;
 
       console.log("Adding new vectorized document into namespace", namespace);
-      if (skipCache) {
+      if (!skipCache) {
         const cacheResult = await cachedVectorInformation(fullFilePath);
         if (cacheResult.exists) {
           const { client } = await this.connect();
@@ -263,10 +263,11 @@ const Weaviate = {
           20
         ),
         chunkHeaderMeta: TextSplitter.buildHeaderMeta(metadata),
+        chunkPrefix: EmbedderEngine?.embeddingPrefix,
       });
       const textChunks = await textSplitter.splitText(pageContent);
 
-      console.log("Chunks created from document:", textChunks.length);
+      console.log("Snippets created from document:", textChunks.length);
       const documentVectors = [];
       const vectors = [];
       const vectorValues = await EmbedderEngine.embedChunks(textChunks);
@@ -381,14 +382,14 @@ const Weaviate = {
     }
 
     const queryVector = await LLMConnector.embedTextInput(input);
-    const { contextTexts, sourceDocuments } = await this.similarityResponse(
+    const { contextTexts, sourceDocuments } = await this.similarityResponse({
       client,
       namespace,
       queryVector,
       similarityThreshold,
       topN,
-      filterIdentifiers
-    );
+      filterIdentifiers,
+    });
 
     const sources = sourceDocuments.map((metadata, i) => {
       return { ...metadata, text: contextTexts[i] };

@@ -1,7 +1,11 @@
+const {
+  createBedrockCredentials,
+  getBedrockAuthMethod,
+  createBedrockChatClient,
+} = require("../../../AiProviders/bedrock/utils.js");
 const Provider = require("./ai-provider.js");
 const InheritMultiple = require("./helpers/classes.js");
 const UnTooled = require("./helpers/untooled.js");
-const { ChatBedrockConverse } = require("@langchain/aws");
 const {
   HumanMessage,
   SystemMessage,
@@ -17,19 +21,12 @@ class AWSBedrockProvider extends InheritMultiple([Provider, UnTooled]) {
   constructor(_config = {}) {
     super();
     const model = process.env.AWS_BEDROCK_LLM_MODEL_PREFERENCE ?? null;
-    const client = new ChatBedrockConverse({
-      region: process.env.AWS_BEDROCK_LLM_REGION,
-      credentials: {
-        accessKeyId: process.env.AWS_BEDROCK_LLM_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_BEDROCK_LLM_ACCESS_KEY,
-        // If we're using a session token, we need to pass it in as a credential
-        // otherwise we must omit it so it does not conflict if using IAM auth
-        ...(this.authMethod === "sessionToken"
-          ? { sessionToken: process.env.AWS_BEDROCK_LLM_SESSION_TOKEN }
-          : {}),
-      },
-      model,
-    });
+    const client = createBedrockChatClient(
+      {},
+      this.authMethod,
+      this.credentials,
+      model
+    );
 
     this._client = client;
     this.model = model;
@@ -37,14 +34,20 @@ class AWSBedrockProvider extends InheritMultiple([Provider, UnTooled]) {
   }
 
   /**
-   * Get the authentication method for the AWS Bedrock LLM.
-   * There are only two valid values for this setting - anything else will default to "iam".
-   * @returns {"iam"|"sessionToken"}
+   * Gets the credentials for the AWS Bedrock LLM based on the authentication method provided.
+   * @returns {object} The credentials object.
+   */
+  get credentials() {
+    return createBedrockCredentials(this.authMethod);
+  }
+
+  /**
+   * Gets the configured AWS authentication method ('iam' or 'sessionToken').
+   * Defaults to 'iam' if the environment variable is invalid.
+   * @returns {"iam" | "iam_role" | "sessionToken"} The authentication method.
    */
   get authMethod() {
-    const method = process.env.AWS_BEDROCK_LLM_CONNECTION_METHOD || "iam";
-    if (!["iam", "sessionToken"].includes(method)) return "iam";
-    return method;
+    return getBedrockAuthMethod();
   }
 
   get client() {
@@ -89,7 +92,7 @@ class AWSBedrockProvider extends InheritMultiple([Provider, UnTooled]) {
    * @param functions
    * @returns The completion.
    */
-  async complete(messages, functions = null) {
+  async complete(messages, functions = []) {
     try {
       let completion;
       if (functions.length > 0) {

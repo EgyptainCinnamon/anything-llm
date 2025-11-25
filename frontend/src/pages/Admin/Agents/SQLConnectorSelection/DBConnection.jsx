@@ -9,18 +9,16 @@ export const DB_LOGOS = {
   "sql-server": MSSQLLogo,
 };
 
-export default function DBConnection({ connection, onRemove, setHasChanges }) {
+export default function DBConnection({ connection, onRemove }) {
   const { database_id, engine } = connection;
   function removeConfirmation() {
     if (
       !window.confirm(
         `Delete ${database_id} from the list of available SQL connections? This cannot be undone.`
       )
-    ) {
+    )
       return false;
-    }
     onRemove(database_id);
-    setHasChanges(true);
   }
 
   return (
@@ -38,7 +36,7 @@ export default function DBConnection({ connection, onRemove, setHasChanges }) {
         <button
           type="button"
           onClick={removeConfirmation}
-          className="border-none text-white/40 hover:text-red-500"
+          className="border-none text-white hover:text-red-500"
         >
           <X size={24} />
         </button>

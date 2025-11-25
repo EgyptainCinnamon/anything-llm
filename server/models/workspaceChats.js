@@ -1,4 +1,5 @@
 const prisma = require("../utils/prisma");
+const { safeJSONStringify } = require("../utils/helpers/chat/responses");
 
 const WorkspaceChats = {
   new: async function ({
@@ -15,7 +16,7 @@ const WorkspaceChats = {
         data: {
           workspaceId,
           prompt,
-          response: JSON.stringify(response),
+          response: safeJSONStringify(response),
           user_id: user?.id || null,
           thread_id: threadId,
           api_session_id: apiSessionId,
@@ -104,6 +105,9 @@ const WorkspaceChats = {
     }
   },
 
+  /**
+   * @deprecated Use markThreadHistoryInvalidV2 instead.
+   */
   markHistoryInvalid: async function (workspaceId = null, user = null) {
     if (!workspaceId) return;
     try {
@@ -123,6 +127,9 @@ const WorkspaceChats = {
     }
   },
 
+  /**
+   * @deprecated Use markThreadHistoryInvalidV2 instead.
+   */
   markThreadHistoryInvalid: async function (
     workspaceId = null,
     user = null,
@@ -136,6 +143,28 @@ const WorkspaceChats = {
           thread_id: threadId,
           user_id: user?.id,
         },
+        data: {
+          include: false,
+        },
+      });
+      return;
+    } catch (error) {
+      console.error(error.message);
+    }
+  },
+
+  /**
+   * @description This function is used to mark a thread's history as invalid.
+   * and works with an arbitrary where clause.
+   * @param {Object} whereClause - The where clause to update the chats.
+   * @param {Object} data - The data to update the chats with.
+   * @returns {Promise<void>}
+   */
+  markThreadHistoryInvalidV2: async function (whereClause = {}) {
+    if (!whereClause) return;
+    try {
+      await prisma.workspace_chats.updateMany({
+        where: whereClause,
         data: {
           include: false,
         },

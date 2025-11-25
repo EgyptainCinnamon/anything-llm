@@ -7,6 +7,7 @@ const ignore = require("ignore");
  * @property {string} [accessToken] - GitLab access token for authentication (optional).
  * @property {string[]} [ignorePaths] - Array of paths to ignore when loading (optional).
  * @property {boolean} [fetchIssues] - Should issues be fetched (optional).
+ * @property {boolean} [fetchWikis] - Should wiki be fetched (optional).
  */
 
 /**
@@ -36,6 +37,7 @@ class GitLabRepoLoader {
     this.ignorePaths = args?.ignorePaths || [];
     this.ignoreFilter = ignore().add(this.ignorePaths);
     this.withIssues = args?.fetchIssues || false;
+    this.withWikis = args?.fetchWikis || false;
 
     this.projectId = null;
     this.apiBase = "https://gitlab.com";
@@ -45,30 +47,20 @@ class GitLabRepoLoader {
   }
 
   #validGitlabUrl() {
-    const UrlPattern = require("url-pattern");
     const validPatterns = [
-      new UrlPattern("https\\://gitlab.com/(:author*)/(:project(*))", {
-        segmentValueCharset: "a-zA-Z0-9-._~%+",
-      }),
+      /https:\/\/gitlab\.com\/(?<author>[^\/]+)\/(?<project>.*)/,
       // This should even match the regular hosted URL, but we may want to know
       // if this was a hosted GitLab (above) or a self-hosted (below) instance
       // since the API interface could be different.
-      new UrlPattern(
-        "(:protocol(http|https))\\://(:hostname*)/(:author*)/(:project(*))",
-        {
-          segmentValueCharset: "a-zA-Z0-9-._~%+",
-        }
-      ),
+      /(http|https):\/\/[^\/]+\/(?<author>[^\/]+)\/(?<project>.*)/,
     ];
 
-    let match = null;
-    for (const pattern of validPatterns) {
-      if (match !== null) continue;
-      match = pattern.match(this.repo);
-    }
-    if (!match) return false;
-    const { author, project } = match;
+    const match = validPatterns
+      .find((pattern) => this.repo.match(pattern)?.groups)
+      ?.exec(this.repo);
+    if (!match?.groups) return false;
 
+    const { author, project } = match.groups;
     this.projectId = encodeURIComponent(`${author}/${project}`);
     this.apiBase = new URL(this.repo).origin;
     this.author = author;
@@ -166,6 +158,21 @@ class GitLabRepoLoader {
       );
     }
 
+    if (this.withWikis) {
+      console.log(`[Gitlab Loader]: Fetching wiki.`);
+      const wiki = await this.fetchWiki();
+      console.log(`[Gitlab Loader]: Fetched ${wiki.length} wiki pages.`);
+      docs.push(
+        ...wiki.map((wiki) => ({
+          wiki,
+          metadata: {
+            source: `wiki-${this.repo}-${wiki.slug}`,
+            url: `${this.repo}/-/wikis/${wiki.slug}`,
+          },
+        }))
+      );
+    }
+
     return docs;
   }
 
@@ -192,6 +199,7 @@ class GitLabRepoLoader {
 
     let branchesPage = [];
     while ((branchesPage = await this.fetchNextPage(branchesRequestData))) {
+      if (!Array.isArray(branchesPage) || !branchesPage?.length) break;
       this.branches.push(...branchesPage.map((branch) => branch.name));
     }
     return this.#branchPrefSort(this.branches);
@@ -214,6 +222,7 @@ class GitLabRepoLoader {
     let filesPage = null;
     let pagePromises = [];
     while ((filesPage = await this.fetchNextPage(filesRequestData))) {
+      if (!Array.isArray(filesPage) || !filesPage?.length) break;
       // Fetch all the files that are not ignored in parallel.
       pagePromises = filesPage
         .filter((file) => {
@@ -251,6 +260,7 @@ class GitLabRepoLoader {
     let issuesPage = null;
     let pagePromises = [];
     while ((issuesPage = await this.fetchNextPage(issuesRequestData))) {
+      if (!Array.isArray(issuesPage) || !issuesPage?.length) break;
       // Fetch all the issues in parallel.
       pagePromises = issuesPage.map(async (issue) => {
         const discussionsRequestData = {
@@ -262,6 +272,7 @@ class GitLabRepoLoader {
         while (
           (discussionPage = await this.fetchNextPage(discussionsRequestData))
         ) {
+          if (!Array.isArray(discussionPage) || !discussionPage?.length) break;
           discussions.push(
             ...discussionPage.map(({ notes }) =>
               notes.map(
@@ -286,6 +297,24 @@ ${body}`
     }
     console.log(`Total issues fetched: ${issues.length}`);
     return issues;
+  }
+
+  /**
+   * Fetches all wiki pages from the repository.
+   * @returns {Promise<WikiPage[]>} An array of wiki page objects.
+   */
+  async fetchWiki() {
+    const wikiRequestData = {
+      endpoint: `/api/v4/projects/${this.projectId}/wikis`,
+      queryParams: {
+        with_content: "1",
+      },
+    };
+
+    const wikiPages = await this.fetchNextPage(wikiRequestData);
+    if (!Array.isArray(wikiPages)) return [];
+    console.log(`Total wiki pages fetched: ${wikiPages.length}`);
+    return wikiPages;
   }
 
   /**

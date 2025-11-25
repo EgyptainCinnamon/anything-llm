@@ -4,6 +4,7 @@ const {
 } = require("../../helpers/chat/LLMPerformanceMonitor");
 const {
   handleDefaultStreamResponseV2,
+  formatChatHistory,
 } = require("../../helpers/chat/responses");
 
 class LiteLLM {
@@ -14,6 +15,7 @@ class LiteLLM {
         "LiteLLM must have a valid base path to use for the api."
       );
 
+    this.className = "LiteLLM";
     this.basePath = process.env.LITE_LLM_BASE_PATH;
     this.openai = new OpenAIApi({
       baseURL: this.basePath,
@@ -34,7 +36,7 @@ class LiteLLM {
   }
 
   log(text, ...args) {
-    console.log(`\x1b[36m[${this.constructor.name}]\x1b[0m ${text}`, ...args);
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   #appendContext(contextTexts = []) {
@@ -115,7 +117,7 @@ class LiteLLM {
     };
     return [
       prompt,
-      ...chatHistory,
+      ...formatChatHistory(chatHistory, this.#generateContent),
       {
         role: "user",
         content: this.#generateContent({ userPrompt, attachments }),

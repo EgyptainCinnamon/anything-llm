@@ -1,11 +1,15 @@
-import { API_BASE } from "@/utils/constants";
-import { baseHeaders } from "@/utils/request";
+import { API_BASE, fullApiUrl } from "@/utils/constants";
+import { baseHeaders, safeJsonParse } from "@/utils/request";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import WorkspaceThread from "@/models/workspaceThread";
 import { v4 } from "uuid";
 import { ABORT_STREAM_EVENT } from "@/utils/chat";
 
 const Workspace = {
+  workspaceOrderStorageKey: "anythingllm-workspace-order",
+  /** The maximum percentage of the context window that can be used for attachments */
+  maxContextWindowLimit: 0.8,
+
   new: async function (data = {}) {
     const { workspace, message } = await fetch(`${API_BASE}/workspace/new`, {
       method: "POST",
@@ -248,6 +252,28 @@ const Workspace = {
     const data = await response.json();
     return { response, data };
   },
+  parseFile: async function (slug, formData) {
+    const response = await fetch(`${API_BASE}/workspace/${slug}/parse`, {
+      method: "POST",
+      body: formData,
+      headers: baseHeaders(),
+    });
+
+    const data = await response.json();
+    return { response, data };
+  },
+
+  getParsedFiles: async function (slug, threadSlug = null) {
+    const basePath = new URL(`${fullApiUrl()}/workspace/${slug}/parsed-files`);
+    if (threadSlug) basePath.searchParams.set("threadSlug", threadSlug);
+    const response = await fetch(basePath, {
+      method: "GET",
+      headers: baseHeaders(),
+    });
+
+    const data = await response.json();
+    return data;
+  },
   uploadLink: async function (slug, link) {
     const response = await fetch(`${API_BASE}/workspace/${slug}/upload-link`, {
       method: "POST",
@@ -452,6 +478,31 @@ const Workspace = {
     return { response, data };
   },
 
+  deleteParsedFiles: async function (slug, fileIds = []) {
+    const response = await fetch(
+      `${API_BASE}/workspace/${slug}/delete-parsed-files`,
+      {
+        method: "DELETE",
+        headers: baseHeaders(),
+        body: JSON.stringify({ fileIds }),
+      }
+    );
+    return response.ok;
+  },
+
+  embedParsedFile: async function (slug, fileId) {
+    const response = await fetch(
+      `${API_BASE}/workspace/${slug}/embed-parsed-file/${fileId}`,
+      {
+        method: "POST",
+        headers: baseHeaders(),
+      }
+    );
+
+    const data = await response.json();
+    return { response, data };
+  },
+
   /**
    * Deletes and un-embeds a single file in a single call from a workspace
    * @param {string} slug - workspace slug
@@ -469,6 +520,62 @@ const Workspace = {
     );
     return response.ok;
   },
+
+  /**
+   * Reorders workspaces in the UI via localstorage on client side.
+   * @param {string[]} workspaceIds - array of workspace ids to reorder
+   * @returns {boolean}
+   */
+  storeWorkspaceOrder: function (workspaceIds = []) {
+    try {
+      localStorage.setItem(
+        this.workspaceOrderStorageKey,
+        JSON.stringify(workspaceIds)
+      );
+      return true;
+    } catch (error) {
+      console.error("Error reordering workspaces:", error);
+      return false;
+    }
+  },
+
+  /**
+   * Orders workspaces based on the order preference stored in localstorage
+   * @param {Array} workspaces - array of workspace JSON objects
+   * @returns {Array} - ordered workspaces
+   */
+  orderWorkspaces: function (workspaces = []) {
+    const workspaceOrderPreference =
+      safeJsonParse(localStorage.getItem(this.workspaceOrderStorageKey)) || [];
+    if (workspaceOrderPreference.length === 0) return workspaces;
+    const orderedWorkspaces = Array.from(workspaces);
+    orderedWorkspaces.sort(
+      (a, b) =>
+        workspaceOrderPreference.indexOf(a.id) -
+        workspaceOrderPreference.indexOf(b.id)
+    );
+    return orderedWorkspaces;
+  },
+
+  /**
+   * Searches for workspaces and threads
+   * @param {string} searchTerm
+   * @returns {Promise<{workspaces: [{slug: string, name: string}], threads: [{slug: string, name: string, workspace: {slug: string, name: string}}]}}>}
+   */
+  searchWorkspaceOrThread: async function (searchTerm) {
+    const response = await fetch(`${API_BASE}/workspace/search`, {
+      method: "POST",
+      headers: baseHeaders(),
+      body: JSON.stringify({ searchTerm }),
+    })
+      .then((res) => res.json())
+      .catch((e) => {
+        console.error(e);
+        return { workspaces: [], threads: [] };
+      });
+    return response;
+  },
+
   threads: WorkspaceThread,
 };
 

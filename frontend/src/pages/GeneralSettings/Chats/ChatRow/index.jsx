@@ -3,22 +3,8 @@ import { X, Trash } from "@phosphor-icons/react";
 import System from "@/models/system";
 import ModalWrapper from "@/components/ModalWrapper";
 import { useModal } from "@/hooks/useModal";
-
-// Some LLMs may return a "valid" response that truncation fails to truncate because
-// it stored an Object as opposed to a string for the `text` field.
-function parseText(jsonResponse = "") {
-  try {
-    const json = JSON.parse(jsonResponse);
-    if (!json.hasOwnProperty("text"))
-      throw new Error('JSON response has no property "text".');
-    return typeof json.text !== "string"
-      ? JSON.stringify(json.text)
-      : json.text;
-  } catch (e) {
-    console.error(e);
-    return "--failed to parse--";
-  }
-}
+import MarkdownRenderer from "../MarkdownRenderer";
+import { safeJsonParse } from "@/utils/request";
 
 export default function ChatRow({ chat, onDelete }) {
   const {
@@ -45,31 +31,31 @@ export default function ChatRow({ chat, onDelete }) {
 
   return (
     <>
-      <tr className="bg-transparent text-white text-opacity-80 text-sm font-medium">
-        <td className="px-6 py-4 font-medium whitespace-nowrap text-white">
+      <tr className="bg-transparent text-white text-opacity-80 text-xs font-medium border-b border-white/10 h-10">
+        <td className="px-6 font-medium whitespace-nowrap text-white">
           {chat.id}
         </td>
-        <td className="px-6 py-4 font-medium whitespace-nowrap text-white">
+        <td className="px-6 font-medium whitespace-nowrap text-white">
           {chat.user?.username}
         </td>
-        <td className="px-6 py-4">{chat.workspace?.name}</td>
+        <td className="px-6">{chat.workspace?.name}</td>
         <td
           onClick={openPromptModal}
-          className="px-6 py-4 border-transparent cursor-pointer transform transition-transform duration-200 hover:scale-105 hover:shadow-lg"
+          className="px-6 border-transparent cursor-pointer transform transition-transform duration-200 hover:scale-105 hover:shadow-lg"
         >
           {truncate(chat.prompt, 40)}
         </td>
         <td
           onClick={openResponseModal}
-          className="px-6 py-4 cursor-pointer transform transition-transform duration-200 hover:scale-105 hover:shadow-lg"
+          className="px-6 cursor-pointer transform transition-transform duration-200 hover:scale-105 hover:shadow-lg"
         >
-          {truncate(parseText(chat.response), 40)}
+          {truncate(safeJsonParse(chat.response, {})?.text, 40)}
         </td>
-        <td className="px-6 py-4">{chat.createdAt}</td>
-        <td className="px-6 py-4 flex items-center gap-x-6">
+        <td className="px-6">{chat.createdAt}</td>
+        <td className="px-6 flex items-center gap-x-6 h-full mt-1">
           <button
             onClick={handleDelete}
-            className="border-none font-medium px-2 py-1 rounded-lg text-theme-text-primary hover:text-red-500"
+            className="text-xs font-medium text-white/80 light:text-black/80 hover:light:text-red-500 hover:text-red-300 rounded-lg px-2 py-1 hover:bg-white hover:light:bg-red-50 hover:bg-opacity-10"
           >
             <Trash className="h-5 w-5" />
           </button>
@@ -80,7 +66,11 @@ export default function ChatRow({ chat, onDelete }) {
       </ModalWrapper>
       <ModalWrapper isOpen={isResponseOpen}>
         <TextPreview
-          text={parseText(chat.response)}
+          text={
+            <MarkdownRenderer
+              content={safeJsonParse(chat.response, {})?.text}
+            />
+          }
           closeModal={closeResponseModal}
         />
       </ModalWrapper>

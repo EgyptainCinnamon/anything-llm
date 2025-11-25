@@ -5,7 +5,7 @@
 > You are fully responsible for securing your deployment and data in this mode.
 > **Any issues** experienced from bare-metal or non-containerized deployments will be **not** answered or supported.
 
-Here you can find the scripts and known working process to run AnythingLLM outside of a Docker container. This method of deployment is preferable for those using local LLMs and want native performance on their devices.
+Here you can find the scripts and known working process to run AnythingLLM outside of a Docker container.
 
 ### Minimum Requirements
 > [!TIP]
@@ -33,7 +33,7 @@ STORAGE_DIR="/your/absolute/path/to/server/storage"
 5. Edit the `frontend/.env` file for the `VITE_BASE_API` to now be set to `/api`. This is documented in the .env for which one you should use.
 ```
 # VITE_API_BASE='http://localhost:3001/api' # Use this URL when developing locally
-# VITE_API_BASE="https://$CODESPACE_NAME-3001.$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN/api" # for Github Codespaces
+# VITE_API_BASE="https://$CODESPACE_NAME-3001.$GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN/api" # for GitHub Codespaces
 VITE_API_BASE='/api' # Use this URL deploying on non-localhost address OR in docker.
 ```
 
@@ -47,9 +47,6 @@ AnythingLLM is comprised of three main sections. The `frontend`, `server`, and `
 2. Copy `frontend/dist` to `server/public` - `cp -R frontend/dist server/public`.
 This should create a folder in `server` named `public` which contains a top level `index.html` file and various other files/folders.
 
-_(optional)_ Build native LLM support if using `native` as your LLM.
-`cd server && npx --no node-llama-cpp download`
-
 3. Migrate and prepare your database file.
 ```
 cd server && npx prisma generate --schema=./prisma/schema.prisma
@@ -57,10 +54,10 @@ cd server && npx prisma migrate deploy --schema=./prisma/schema.prisma
 ```
 
 4. Boot the server in production
-`cd server && NODE_ENV=production node index.js &` 
+`cd server && NODE_ENV=production node index.js &`
 
 5. Boot the collection in another process
-`cd collector && NODE_ENV=production node index.js &` 
+`cd collector && NODE_ENV=production node index.js &`
 
 AnythingLLM should now be running on `http://localhost:3001`!
 
@@ -89,7 +86,7 @@ curl -I "http://localhost:3001/api/env-dump" | head -n 1|cut -d$' ' -f2
 echo "Rebuilding Frontend"
 cd $HOME/anything-llm/frontend && yarn && yarn build && cd $HOME/anything-llm
 
-echo "Copying to Sever Public"
+echo "Copying to Server Public"
 rm -rf server/public
 cp -r frontend/dist server/public
 
@@ -115,4 +112,36 @@ cd $HOME/anything-llm/collector
 (NODE_ENV=production node index.js) &> /logs/collector.log &
 ```
 
+## Using Nginx?
 
+If you are using Nginx, you can use the following example configuration to proxy the requests to the server. Chats for streaming require **websocket** connections, so you need to ensure that the Nginx configuration is set up to support websockets. You can do this with a simple reverse proxy configuration.
+
+```nginx
+server {
+   # Enable websocket connections for agent protocol.
+   location ~* ^/api/agent-invocation/(.*) {
+      proxy_pass http://0.0.0.0:3001;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "Upgrade";
+   }
+
+   listen 80;
+   server_name [insert FQDN here];
+   location / {
+      # Prevent timeouts on long-running requests.
+      proxy_connect_timeout       605;
+      proxy_send_timeout          605;
+      proxy_read_timeout          605;
+      send_timeout                605;
+      keepalive_timeout           605;
+
+      # Enable readable HTTP Streaming for LLM streamed responses
+      proxy_buffering off; 
+      proxy_cache off;
+
+      # Proxy your locally running service
+      proxy_pass  http://0.0.0.0:3001;
+    }
+}
+```

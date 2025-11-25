@@ -50,6 +50,80 @@ export function GoogleSearchOptions({ settings }) {
   );
 }
 
+const SerpApiEngines = [
+  { name: "Google Search", value: "google" },
+  { name: "Google Images", value: "google_images_light" },
+  { name: "Google Jobs", value: "google_jobs" },
+  { name: "Google Maps", value: "google_maps" },
+  { name: "Google News", value: "google_news_light" },
+  { name: "Google Patents", value: "google_patents" },
+  { name: "Google Scholar", value: "google_scholar" },
+  { name: "Google Shopping", value: "google_shopping_light" },
+  { name: "Amazon", value: "amazon" },
+  { name: "Baidu", value: "baidu" },
+];
+export function SerpApiOptions({ settings }) {
+  return (
+    <>
+      <p className="text-sm text-white/60 my-2">
+        Get a free API key{" "}
+        <a
+          href="https://serpapi.com/"
+          target="_blank"
+          rel="noreferrer"
+          className="text-blue-300 underline"
+        >
+          from SerpApi.
+        </a>
+      </p>
+      <div className="flex gap-x-4">
+        <div className="flex flex-col w-60">
+          <label className="text-white text-sm font-semibold block mb-3">
+            API Key
+          </label>
+          <input
+            type="password"
+            name="env::AgentSerpApiKey"
+            className="border-none bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none block w-full p-2.5"
+            placeholder="SerpApi API Key"
+            defaultValue={settings?.AgentSerpApiKey ? "*".repeat(20) : ""}
+            required={true}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="flex flex-col w-60">
+          <label className="text-white text-sm font-semibold block mb-3">
+            Engine
+          </label>
+          <select
+            name="env::AgentSerpApiEngine"
+            required={true}
+            className="border-none bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none block w-full p-2.5"
+            defaultValue={settings?.AgentSerpApiEngine || "google"}
+          >
+            {SerpApiEngines.map(({ name, value }) => (
+              <option key={name} value={value}>
+                {name}
+              </option>
+            ))}
+          </select>
+          {/* <input
+            type="text"
+            name="env::AgentSerpApiEngine"
+            className="border-none bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none block w-full p-2.5"
+            placeholder="SerpApi engine (Google, Amazon...)"
+            defaultValue={settings?.AgentSerpApiEngine || "google"}
+            required={true}
+            autoComplete="off"
+            spellCheck={false}
+          /> */}
+        </div>
+      </div>
+    </>
+  );
+}
+
 const SearchApiEngines = [
   { name: "Google Search", value: "google" },
   { name: "Google Maps", value: "google_maps" },
@@ -210,16 +284,17 @@ export function BingSearchOptions({ settings }) {
         </li>
         <li>Create a new Azure account or sign in with an existing one.</li>
         <li>
-          Navigate to the "Create a resource" section and search for "Bing
-          Search v7".
+          Navigate to the "Create a resource" section and search for "Grounding
+          with Bing Search".
         </li>
         <li>
-          Select the "Bing Search v7" resource and create a new subscription.
+          Select the "Grounding with Bing Search" resource and create a new
+          subscription.
         </li>
+        <li>Choose the pricing tier that suits your needs.</li>
         <li>
-          Choose the pricing tier that suits your needs (free tier available).
+          Obtain the API key for your Grounding with Bing Search subscription.
         </li>
-        <li>Obtain the API key for your Bing Web Search subscription.</li>
       </ol>
     </>
   );
@@ -265,13 +340,13 @@ export function SearXNGOptions({ settings }) {
     <div className="flex gap-x-4">
       <div className="flex flex-col w-60">
         <label className="text-white text-sm font-semibold block mb-3">
-          SearXNG API base URL
+          SearXNG API Base URL
         </label>
         <input
           type="url"
           name="env::AgentSearXNGApiUrl"
           className="border-none bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none block w-full p-2.5"
-          placeholder="SearXNG API Key"
+          placeholder="SearXNG API Base URL"
           defaultValue={settings?.AgentSearXNGApiUrl}
           required={true}
           autoComplete="off"
@@ -323,6 +398,41 @@ export function DuckDuckGoOptions() {
       <p className="text-sm text-white/60 my-2">
         DuckDuckGo is ready to use without any additional configuration.
       </p>
+    </>
+  );
+}
+
+export function ExaSearchOptions({ settings }) {
+  return (
+    <>
+      <p className="text-sm text-white/60 my-2">
+        You can get an API key{" "}
+        <a
+          href="https://exa.ai"
+          target="_blank"
+          rel="noreferrer"
+          className="text-blue-300 underline"
+        >
+          from Exa.
+        </a>
+      </p>
+      <div className="flex gap-x-4">
+        <div className="flex flex-col w-60">
+          <label className="text-white text-sm font-semibold block mb-3">
+            API Key
+          </label>
+          <input
+            type="password"
+            name="env::AgentExaApiKey"
+            className="border-none bg-theme-settings-input-bg text-white placeholder:text-theme-settings-input-placeholder text-sm rounded-lg focus:outline-primary-button active:outline-primary-button outline-none block w-full p-2.5"
+            placeholder="Exa API Key"
+            defaultValue={settings?.AgentExaApiKey ? "*".repeat(20) : ""}
+            required={true}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+      </div>
     </>
   );
 }

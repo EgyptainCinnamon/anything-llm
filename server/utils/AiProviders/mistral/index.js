@@ -4,6 +4,7 @@ const {
 } = require("../../helpers/chat/LLMPerformanceMonitor");
 const {
   handleDefaultStreamResponseV2,
+  formatChatHistory,
 } = require("../../helpers/chat/responses");
 
 class MistralLLM {
@@ -11,6 +12,7 @@ class MistralLLM {
     if (!process.env.MISTRAL_API_KEY)
       throw new Error("No Mistral API key was set.");
 
+    this.className = "MistralLLM";
     const { OpenAI: OpenAIApi } = require("openai");
     this.openai = new OpenAIApi({
       baseURL: "https://api.mistral.ai/v1",
@@ -26,6 +28,11 @@ class MistralLLM {
 
     this.embedder = embedder ?? new NativeEmbedder();
     this.defaultTemp = 0.0;
+    this.log("Initialized with model:", this.model);
+  }
+
+  log(text, ...args) {
+    console.log(`\x1b[36m[${this.className}]\x1b[0m ${text}`, ...args);
   }
 
   #appendContext(contextTexts = []) {
@@ -92,7 +99,7 @@ class MistralLLM {
     };
     return [
       prompt,
-      ...chatHistory,
+      ...formatChatHistory(chatHistory, this.#generateContent),
       {
         role: "user",
         content: this.#generateContent({ userPrompt, attachments }),
